@@ -20,6 +20,8 @@ const CAPABILITY_MANAGER_ACTIONS = Object.freeze([
     'execute_repair',
     'list_installations',
     'list_core_tools',
+    'list_standard_tool_packs',
+    'expose_standard_tool_packs',
     'search_tool_candidates',
     'plan_mcp_candidate',
     'build_smoke_profile',
@@ -496,6 +498,12 @@ class HumanClawCapabilityManager {
             if (action === 'list_core_tools') {
                 return formatToolResult(await this.listCoreTools(args));
             }
+            if (action === 'list_standard_tool_packs') {
+                return formatToolResult(await this.listStandardToolPacks(args));
+            }
+            if (action === 'expose_standard_tool_packs') {
+                return formatToolResult(await this.exposeStandardToolPacks(args));
+            }
             if (action === 'search_tool_candidates') {
                 return formatToolResult(await this.searchToolCandidates(args));
             }
@@ -572,6 +580,7 @@ class HumanClawCapabilityManager {
                 'Capability Registry: record available built-in tools, MCP servers, skills, health, and task coverage.',
                 'Capability Installer: turn requested capabilities into explicit install plans with rollback and validation.',
                 'Tool Acquisition Gateway: discover core tools and MCP Registry candidates without exposing unverified tools to the Agent.',
+                'Standard Tool Packs: expose vetted email, document, web, academic, and media backends as contract-checked callable/non-callable tools.',
                 'Contract Compiler: import mature schemas from MCP Registry, Composio, OpenAPI, LangChain/Pydantic, and Codex/OpenHands-style specs into one AIGL contract shape.',
                 'Contract Linter: reject tools missing required fields, when-not-to-use guidance, examples, error recovery, or smoke profiles.',
                 'External Auth Profiles: store only env-var references, base URLs, and account scope; never persist raw API keys.',
@@ -590,6 +599,17 @@ class HumanClawCapabilityManager {
             status: 'completed',
             coreTools: this.toolAcquisitionGateway.listCoreTools()
         };
+    }
+
+    async listStandardToolPacks(args = {}) {
+        return {
+            status: 'completed',
+            standardToolPacks: this.toolAcquisitionGateway.listStandardToolPacks(args)
+        };
+    }
+
+    async exposeStandardToolPacks(args = {}) {
+        return await this.toolAcquisitionGateway.exposeStandardToolPacks(args);
     }
 
     async searchToolCandidates(args = {}) {

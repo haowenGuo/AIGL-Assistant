@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { HumanClawGateway } = require('../electron/humanclaw-gateway.cjs');
+const { stripControlTags } = require('../electron/humanclaw-agent-runner.cjs');
 
 async function jsonFetch(url, options = {}) {
     const response = await fetch(url, {
@@ -26,6 +27,31 @@ async function runAgent(baseUrl, payload) {
         body: JSON.stringify(payload)
     });
 }
+
+test('HumanClaw Agent Runner strips persona_output blocks from visible text', () => {
+    const visibleText = stripControlTags(`我喜欢和你一起研究新东西。
+
+<persona_output>
+{"emotion":"joyful","gestureIntent":"open_hands","taskState":"listening"}
+</persona_output>`);
+
+    assert.equal(visibleText, '我喜欢和你一起研究新东西。');
+    assert.doesNotMatch(visibleText, /persona_output|gestureIntent|taskState/);
+
+    const embeddedJsonText = stripControlTags(`{好的啦～被你夸得有点小害羞呢。
+
+{
+"persona_output": {
+"emotion": "happy",
+"gestureIntent": "tilt_head_smile",
+"taskState": "idle_listening"
+}
+}}`);
+
+    assert.equal(embeddedJsonText, '好的啦～被你夸得有点小害羞呢。');
+    assert.doesNotMatch(embeddedJsonText, /persona_output|gestureIntent|taskState/);
+    assert.doesNotMatch(embeddedJsonText, /^\{|\}$/);
+});
 
 test('HumanClaw Agent Runner plans chat and executes file tasks through the Gateway', async () => {
     const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'humanclaw-agent-test-'));

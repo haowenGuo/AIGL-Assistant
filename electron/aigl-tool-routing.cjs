@@ -149,10 +149,12 @@ const ROUTING_PROFILES = Object.freeze([
             /\b(youtube|youtu\.be|video|transcript|caption|subtitle)\b/i,
             /(视频|字幕|转录|youtube)/i
         ],
-        tools: ['youtube_transcript'],
+        tools: ['youtube_video_search', 'youtube_transcript'],
+        primaryTools: ['youtube_video_search', 'youtube_transcript'],
         bonus: 88,
+        primaryBonus: 10,
         webPenalty: 80,
-        advice: 'Use youtube_transcript for YouTube/video transcript evidence before web_search.'
+        advice: 'Use youtube_video_search when the video URL is unknown; use youtube_transcript for a known YouTube URL before web_search.'
     }),
     Object.freeze({
         id: 'audio',
@@ -270,6 +272,13 @@ function scoreToolForQuery(entry = {}, query = '') {
         if (toolName === 'web_search' && !explicitWebSearch) {
             score -= profile.webPenalty || 50;
         }
+    }
+
+    if (toolName === 'youtube_transcript' && /\bhttps?:\/\/\S*(youtube\.com|youtu\.be)\S*/i.test(query)) {
+        score += 30;
+    }
+    if (toolName === 'youtube_video_search' && !/\bhttps?:\/\/\S*(youtube\.com|youtu\.be)\S*/i.test(query) && /\b(youtube|video|bbc earth|channel|title)\b/i.test(query)) {
+        score += 32;
     }
 
     if (

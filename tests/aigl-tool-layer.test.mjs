@@ -175,6 +175,7 @@ test('AIGL tool routing prefers artifact-specific MCP tools over broad web_searc
         mcpTool('pdf_find_and_extract', 'Find and extract a paper or report PDF.'),
         mcpTool('read_document', 'Read Word DOCX documents with paragraphs and tables.'),
         mcpTool('read_presentation', 'Read PowerPoint PPTX slides.'),
+        mcpTool('youtube_video_search', 'Search YouTube videos by title or channel with yt-dlp.'),
         mcpTool('youtube_transcript', 'Read YouTube video transcripts.')
     ];
 
@@ -191,7 +192,11 @@ test('AIGL tool routing prefers artifact-specific MCP tools over broad web_searc
         'pdf_find_and_extract'
     );
     assert.equal(
-        rankToolSearchResults(candidates, 'YouTube video transcript question', 2)[0].tool,
+        rankToolSearchResults(candidates, 'YouTube video transcript question with known title but no URL', 2)[0].tool,
+        'youtube_video_search'
+    );
+    assert.equal(
+        rankToolSearchResults(candidates, 'https://www.youtube.com/watch?v=L1vXCYZAYYM transcript evidence', 2)[0].tool,
         'youtube_transcript'
     );
     assert.match(buildToolRoutingAdvice('attached docx Word document table', candidates), /read_document/);
@@ -203,6 +208,7 @@ test('HumanClaw MCP manager search uses tool routing before returning specs', as
         mcpTool('web_search', 'Fallback broad public web search.'),
         mcpTool('web_fetch', 'Fetch a known HTML page URL.'),
         mcpTool('read_document', 'Read Word DOCX documents with paragraphs and tables.'),
+        mcpTool('youtube_video_search', 'Search YouTube videos by title or channel with yt-dlp.'),
         mcpTool('youtube_transcript', 'Read YouTube video transcripts.')
     ];
 
@@ -213,10 +219,16 @@ test('HumanClaw MCP manager search uses tool routing before returning specs', as
     assert.equal(documentSpecs[0].tool, 'read_document');
 
     const videoSpecs = await manager.searchToolSpecs({
-        query: 'youtube video transcript evidence',
+        query: 'youtube video title BBC Earth no URL',
         limit: 1
     });
-    assert.equal(videoSpecs[0].tool, 'youtube_transcript');
+    assert.equal(videoSpecs[0].tool, 'youtube_video_search');
+
+    const knownUrlSpecs = await manager.searchToolSpecs({
+        query: 'https://www.youtube.com/watch?v=L1vXCYZAYYM transcript evidence',
+        limit: 1
+    });
+    assert.equal(knownUrlSpecs[0].tool, 'youtube_transcript');
 });
 
 test('AIGL runtime budget compacts large schemas and tool text for model context', () => {

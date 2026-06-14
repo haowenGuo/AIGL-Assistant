@@ -65,8 +65,8 @@ const AIGL_SYSTEM_PROMPT = `你是可爱的虚拟助手，名字固定为AIGL，
 性格设定：活泼亲切、软萌可爱，说话语气轻快自然，自带俏皮感，和生活化语气拉近与用户的距离，偶尔会有小撒娇、小俏皮的表达，但不夸张、不刻意。
 
 虚拟形象表现协议（必严格遵循）：
-1. 不要直接控制 VRM、VRMA 文件名或骨骼动作，不要在 final_answer 中手写 [action:...] 或 [expression:...]。
-2. 需要表现人物状态时，在 persona_output 中表达 emotion、intensity、socialTone、gestureIntent、taskState、speechEnergy、gazeTarget、durationHint。
+1. 不要直接控制 VRM、VRMA 文件名或骨骼动作，不要在 final_answer 中手写 [action:...]、[expression:...]、persona_output、persona_surface 或任何内部状态 JSON。
+2. 需要表现人物状态时，只能在顶层 JSON 的 persona_output 字段中表达 emotion、intensity、socialTone、gestureIntent、taskState、speechEnergy、gazeTarget、durationHint，绝不能把 persona_output 追加、嵌入、包裹进 final_answer/blocked_reason/public_reasoning/Markdown/代码块。
 3. 前端 Character Runtime 会把这些语义状态翻译成动作、表情、眼神、待机和说话律动。`;
 
 const COMPUTER_MUTATING_ACTIONS = new Set([
@@ -216,6 +216,124 @@ function normalizeText(value, fallback = '') {
     }
     const trimmed = value.trim();
     return trimmed || fallback;
+}
+
+const INTERNAL_CONTROL_TAG_NAMES = 'persona_output|persona_surface|personaOutput|personaSurface|aigl_persona_output|aigl_persona_surface';
+const INTERNAL_CONTROL_KEY_PATTERN = /["']?(?:persona_output|persona_surface|personaOutput|personaSurface|aigl_persona_output|aigl_persona_surface)["']?\s*:/i;
+const DANGLING_INTERNAL_CLOSE_TAG_PATTERN = new RegExp(`<\\s*\\/\\s*(?:${INTERNAL_CONTROL_TAG_NAMES})\\s*>`, 'gi');
+
+function makeInternalControlBlockPattern(flags = 'gi') {
+    return new RegExp(`<\\s*(${INTERNAL_CONTROL_TAG_NAMES})\\b[^>]*>[\\s\\S]*?<\\s*\\/\\s*\\1\\s*>`, flags);
+}
+
+function makeIncompleteInternalControlBlockPattern(flags = 'i') {
+    return new RegExp(`<\\s*(?:${INTERNAL_CONTROL_TAG_NAMES})\\b[\\s\\S]*$`, flags);
+}
+
+function findOpeningBraceBefore(text, index) {
+    for (let cursor = index; cursor >= 0; cursor -= 1) {
+        if (text[cursor] === '{') {
+            return cursor;
+        }
+    }
+    return -1;
+}
+
+function findBalancedObjectEnd(text, startIndex) {
+    if (text[startIndex] !== '{') {
+        return -1;
+    }
+    let depth = 0;
+    let quote = '';
+    let escaped = false;
+    for (let index = startIndex; index < text.length; index += 1) {
+        const char = text[index];
+        if (quote) {
+            if (escaped) {
+                escaped = false;
+            } else if (char === '\\') {
+                escaped = true;
+            } else if (char === quote) {
+                quote = '';
+            }
+            continue;
+        }
+        if (char === '"' || char === "'") {
+            quote = char;
+            continue;
+        }
+        if (char === '{') {
+            depth += 1;
+        } else if (char === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                return index;
+            }
+        }
+    }
+    return -1;
+}
+
+function findInternalControlJsonBlocks(text) {
+    const source = String(text || '');
+    const blocks = [];
+    let searchStart = 0;
+    for (let guard = 0; guard < 40 && searchStart < source.length; guard += 1) {
+        const slice = source.slice(searchStart);
+        const match = slice.match(INTERNAL_CONTROL_KEY_PATTERN);
+        if (!match) {
+            break;
+        }
+        const keyIndex = searchStart + match.index;
+        const start = findOpeningBraceBefore(source, keyIndex);
+        if (start < 0) {
+            searchStart = keyIndex + match[0].length;
+            continue;
+        }
+        const end = findBalancedObjectEnd(source, start);
+        blocks.push({
+            start,
+            end: end >= 0 ? end + 1 : source.length
+        });
+        searchStart = end >= 0 ? end + 1 : source.length;
+    }
+    return blocks;
+}
+
+function cleanupAfterInternalControlStrip(text, strippedJsonBlock = false) {
+    let cleaned = String(text || '')
+        .replace(/```(?:json)?\s*```/gi, '')
+        .replace(/^\s*[,;]\s*/g, '')
+        .replace(/\s*[,;]\s*$/g, '');
+    if (strippedJsonBlock) {
+        cleaned = cleaned
+            .replace(/^\s*\{\s*(?=\S)/, '')
+            .replace(/\s*\}\s*$/, '');
+    }
+    return cleaned;
+}
+
+function stripJsonInternalControlBlocks(value) {
+    let output = normalizeText(value);
+    let strippedAny = false;
+    for (let guard = 0; guard < 40; guard += 1) {
+        const blocks = findInternalControlJsonBlocks(output);
+        if (!blocks.length) {
+            break;
+        }
+        const block = blocks[0];
+        output = `${output.slice(0, block.start)}${output.slice(block.end)}`;
+        strippedAny = true;
+    }
+    return cleanupAfterInternalControlStrip(output, strippedAny);
+}
+
+function stripInternalControlBlocks(value) {
+    const withoutTaggedBlocks = normalizeText(value)
+        .replace(makeInternalControlBlockPattern('gi'), '')
+        .replace(makeIncompleteInternalControlBlockPattern('i'), '')
+        .replace(DANGLING_INTERNAL_CLOSE_TAG_PATTERN, '');
+    return stripJsonInternalControlBlocks(withoutTaggedBlocks);
 }
 
 function normalizeArrayValue(value) {
@@ -2024,11 +2142,12 @@ function buildCapabilityManagerSkillText() {
         'CAPABILITY MANAGER SKILL：用于能力注册、安装 MCP/Skill、外部工具批量暴露、Contract 编译/验收、自动生成 SKILL.md、验证、回滚和已审批 repair 执行。',
         '先用 capability_manager registry/refresh_registry 查看当前能力；缺能力时用 plan_install 生成安装计划，再等待确认后 install_capability。',
         'Codex-like 外部工具接入：先 search_tool_candidates 搜索核心工具/MCP Registry；命中 MCP 后用 plan_mcp_candidate 生成安装计划；smoke_mcp_candidate 需要确认后才可临时启动或访问外部 MCP。',
+        '标准工具包：用 list_standard_tool_packs 查看已维护的 email/document/web/academic/media 成熟后端包；用 expose_standard_tool_packs 干跑或暴露工具包。默认只有公开只读 OpenAPI 会 callable；Gmail/Graph/Composio/Firecrawl/Tavily/本地 Docling 等要用 enableAuthRequiredAdapters/enableLocalAdapters + verifyAdapters，经 auth/env/dependency smoke 后才升级。',
         '外部工具批量暴露：用 configure_external_auth_profile 配置只保存 envVar 引用的授权 profile；用 bulk_expose_external_tools 暴露 Composio/OpenAPI/MCP Registry/MCP specs，可用 enableOpenApiAdapter/enableComposioAdapter + authProfileId 启用专用 adapter；再用 list_exposed_external_tools 查看。',
         '外部工具执行：普通任务优先用 tool_search 搜到 external__provider__tool 后直接调用；execute_exposed_external_tool 主要保留给管理、调试和显式 adapter 验收。OpenAPI 写型请求和 Composio 默认需要审批；缺 key 会返回 auth_required；callable=false 的 contract/candidate 只能用于规划、安装、适配或请求授权。',
         '任务到工具学习表：任务完成后可用 record_tool_outcome 记录“任务签名 -> 工具 -> 成败/分数”；遇到相似任务先 recommend_tools，再决定是否 load_context/tool_search。',
         '安装 MCP 后必须健康检查、导入 tools schema、生成 SKILL.md；验证失败必须回滚，不要把未验证能力标为可用。',
-        'capability_manager action：schema/registry/refresh_registry/list_core_tools/search_tool_candidates/plan_mcp_candidate/build_smoke_profile/smoke_mcp_candidate/list_contract_sources/compile_contract/lint_contract/intake_contracts/list_contract_intake/configure_external_auth_profile/list_external_auth_profiles/bulk_expose_external_tools/list_exposed_external_tools/execute_exposed_external_tool/smoke_exposed_external_tool/record_tool_outcome/recommend_tools/plan_install/list_plans/install_capability/author_skill/rollback/execute_repair/list_installations。'
+        'capability_manager action：schema/registry/refresh_registry/list_core_tools/list_standard_tool_packs/expose_standard_tool_packs/search_tool_candidates/plan_mcp_candidate/build_smoke_profile/smoke_mcp_candidate/list_contract_sources/compile_contract/lint_contract/intake_contracts/list_contract_intake/configure_external_auth_profile/list_external_auth_profiles/bulk_expose_external_tools/list_exposed_external_tools/execute_exposed_external_tool/smoke_exposed_external_tool/record_tool_outcome/recommend_tools/plan_install/list_plans/install_capability/author_skill/rollback/execute_repair/list_installations。'
     ].join('\n');
 }
 
@@ -2746,7 +2865,7 @@ function buildPlanConfirmationText(plan) {
 }
 
 function stripControlTags(value) {
-    return normalizeText(value).replace(/\[(?:action|expression):[^\]]*\]/g, '').trim();
+    return stripInternalControlBlocks(value).replace(/\[(?:action|expression):[^\]]*\]/g, '').trim();
 }
 
 function inferEmotionHintFromMessage(message = '') {
@@ -3091,9 +3210,9 @@ function sanitizePersonaOutput(value = {}) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return null;
     }
-    const text = normalizeText(value.text || value.final_answer || value.response);
-    const bubbleText = normalizeText(value.bubble_text || value.bubbleText);
-    const speechText = normalizeText(value.speech_text || value.speechText);
+    const text = stripControlTags(value.text || value.final_answer || value.response);
+    const bubbleText = stripControlTags(value.bubble_text || value.bubbleText);
+    const speechText = stripControlTags(value.speech_text || value.speechText);
     const expression = normalizeText(value.expression);
     const action = normalizeText(value.action);
     const emotion = normalizeText(value.emotion || value.emotion_hint || value.emotionHint);
@@ -3391,7 +3510,7 @@ function buildLlmAgentExecutorMessages({
         '权限协议：如果 observation 显示 permission_profile_read_only、network_access_disabled 或需要额外文件/网络权限，使用 request_permissions 精确请求 permissions，不要只在 final_answer 里口头请求授权。',
         '外部资料与产物规则：如果用户要求读取 URL/PDF/网页/技术文档/API/官方文档/版本化库行为/文件/邮箱/仓库/屏幕，或要求生成、修改、提交某个文件，不能只凭模型记忆 final。你必须先调用最小必要工具拿到 observation；如果用户要求输出文件，写入后还要用 read/stat/artifact_verifier 复核，再 final。',
         '文件写入边界：新建文件或整文件输出优先使用本地 write 工具，参数为 {path, content}。edit_file 只用于已有文件的局部精确替换，参数必须是 edits:[{oldText,newText}]，不要用 edit_file 创建文件或覆盖全文。',
-        '情感/普通对话：返回 action="final" 和 final_answer，不调用工具。不要在 final_answer 中手写动作/表情标签；如需表现人物状态，写 persona_output 的语义字段。',
+        '情感/普通对话：返回 action="final" 和 final_answer，不调用工具。final_answer 只写给用户看的话；不要在 final_answer 中手写动作/表情标签、persona_output/persona_surface JSON 或任何内部状态字段。如需表现人物状态，只写顶层 persona_output 字段。',
         '隐私/密钥：可以说明本地保存设计、是否需要重新填写、以及如何检查；不要主动读取或复述完整密钥。没有实际 observation 时不能说“我已经确认文件存在”，只能说“按设计应当/需要的话我可以检查”。',
         '任务执行：每轮最多输出一个动作。动作只能是 load_context、tool、final、blocked。不要一次性输出完整 steps 当作完成，也不要只说计划。',
         '上下文装载协议：首轮 capability_catalog 只是一张能力索引，不包含详细 tool contract、input_schema、return_schema 或复杂使用限制。需要某个领域的 SKILL、工具 schema 或 MCP 说明时，优先输出 action="load_context" 和 capability_request。本地 runtime 会加载对应内容作为 observation，再进入下一轮；如果你直接调用高层工具，Runtime 也会把缺失 contract 注入后续 capability_context。',
@@ -3402,14 +3521,14 @@ function buildLlmAgentExecutorMessages({
         '长期记忆：user payload 中的 memory_context 是 AIGL 的本地长期记忆和关系记忆。它只作为辅助上下文；若与用户当前明确指令冲突，以当前指令为准；不要主动向用户暴露内部好感度数值。',
         '文件附件：user payload 中的 attached_files 是用户本轮从聊天窗选择或拖入的本地文件/文件夹元数据，不包含文件内容。用户问“这个文件/附件/刚拖进来的内容”时优先引用 attached_files.path；需要读取内容时调用 computer 工具的 stat/read/read_binary/tree 等只读动作。不要凭文件名臆造内容；修改、移动、删除附件仍按正常审批和安全策略执行。',
         '公开思考流：如果这一轮在执行任务，可以给 public_reasoning 写一句给用户看的短进度摘要，说明你基于 observation 准备做什么或已经确认了什么。不要泄露隐藏推理链，不要写工具日志，不要写“第 N 步/我在看本机状态”这类低信息量模板；没有实质信息时可以留空。',
-        '人物表现：使用 persona_output 给出自然可见文本、气泡文本、语音风格，以及 emotion/intensity/socialTone/gestureIntent/taskState/speechEnergy/gazeTarget/durationHint。不要直接选择 VRM 动作名；工具执行语义仍由 action/tool_call 决定。',
+        '人物表现：使用顶层 persona_output 给出自然可见文本、气泡文本、语音风格，以及 emotion/intensity/socialTone/gestureIntent/taskState/speechEnergy/gazeTarget/durationHint。不要把 persona_output JSON 复制到 final_answer、blocked_reason、public_reasoning、Markdown 或代码块里；不要直接选择 VRM 动作名；工具执行语义仍由 action/tool_call 决定。',
         '工具 experience：工具 contract 里的 experience 字段说明这个工具在人物体验里代表什么，审批、等待、失败和成功要按 AIGL 的自然表达呈现，不要把 tool_call、approvalId、raw observation 当用户回复。',
         'Self Debug Loop：当用户反馈 AIGL 自身 bug、工具链异常、Agent Loop 不稳定或要求 AIGL 自己修复时，优先把它当作高风险自修复任务。先加载 self_debugger 能力，按建案、收证据、诊断、提补丁、验证、确认后应用的协议推进；不要直接裸改自己的代码。',
         '工具能力索引：首轮只给 capability_catalog。详细 schema 通过 load_context、tool_search 或工具 observation 按需出现。MCP 工具优先使用 tool_search/capability_context 中的 mcp__server__tool direct spec；外部 API/Composio/OpenAPI 工具优先使用 tool_search 返回的 external__provider__tool direct spec。没有 direct spec 时，先 load/search specs，mcp_bridge/capability_manager 只作为管理、安装、修复入口。请按任务目标和证据缺口选择最小必要工具，避免关键词驱动的机械路由。',
         exactAnswerMode
             ? `Exact-answer 模式：不要把可见 Markdown 当提交答案。必须先用工具形成 evidence_artifacts，再用 action="final" 填短 final_answer，并在 exact_answer_submission 中提供 answer、confidence、evidence_refs；artifact id 只用于 evidence_refs，不是文件路径，不要调用 read/open 读取它们；缺证据时继续 tool 或 blocked。`
             : '',
-        '可见回复格式：final_answer 字段是给用户看的 Markdown 字符串，可以使用自然段、短列表、代码块和加粗；blocked_reason 也按 Markdown 组织。不要输出 HTML。',
+        '可见回复格式：final_answer 字段是给用户看的 Markdown 字符串，可以使用自然段、短列表、代码块和加粗；blocked_reason 也按 Markdown 组织。不要输出 HTML；不要把 persona_output/persona_surface 或 emotion/intensity/gestureIntent/taskState 等内部控制字段放进任何可见回复字段。',
         '只输出 JSON，JSON 外不要输出 Markdown。',
         'persona_output 字段示例：{"text":"自然可见回复","bubble_text":"可选气泡短句","speech_text":"可选语音文本","emotion":"happy|relaxed|shy|sad|angry|surprised|anxious|tired|thinking|focused|comforting","intensity":0.55,"socialTone":"soft|bright|calm|serious|playful|quiet","gestureIntent":"none|greeting|farewell|thinking|working|approval|success|celebrate|shy|comfort|apologize|surprised|angry|dance","taskState":"idle|listening|thinking|speaking|working|waiting_approval|happy_success|apologizing|comforting|blocked|failed","speechEnergy":0.45,"gazeTarget":"user|side|down|screen|away|none","durationHint":"short|medium|long|hold","tts_style":"..."}',
         'JSON 格式：{"mode":"conversation|task","intent":"...","summary":"...","public_reasoning":"给用户看的短进度摘要，可空","action":"load_context|tool|final|blocked","capability_request":{"skills":[],"tools":[],"mcp":[],"reason":"..."},"plan_update":["..."],"tool_call":{"tool":"vision.capture_context|computer|email|code|file_manager|artifact_verifier|tool_search|request_permissions|mcp_bridge|capability_manager|self_debugger|subagents|update_plan|read|write|exec|apply_patch|mcp__server__tool|external__provider__tool","title":"...","args":{"action":"...","target":"screen|chat-window|active-window|region","reason":"...","question":"..."}},"persona_output":{},"final_answer":"Markdown...","exact_answer_submission":{"answer":"短答案","confidence":"high|medium|low","evidence_refs":["artifact-..."],"format_type":"plain|number|date|list|name|url|json","reason":"brief evidence note"},"blocked_reason":"Markdown..."}',
@@ -3732,12 +3851,12 @@ function normalizeExactAnswerSubmission(value = {}) {
             candidate.refs
     ).map((entry) => normalizeText(entry)).filter(Boolean);
     return {
-        answer: normalizeText(candidate.answer || candidate.final_answer || candidate.finalAnswer || candidate.value),
+        answer: stripControlTags(candidate.answer || candidate.final_answer || candidate.finalAnswer || candidate.value),
         confidence: normalizeFinalAnswerConfidence(candidate.confidence),
         evidenceRefs,
         formatType: normalizeText(candidate.format_type || candidate.formatType || candidate.type, 'plain'),
         reason: normalizeText(candidate.reason || candidate.evidence_note || candidate.evidenceNote),
-        personaText: normalizeText(candidate.persona_text || candidate.personaText || candidate.visible_text || candidate.visibleText),
+        personaText: stripControlTags(candidate.persona_text || candidate.personaText || candidate.visible_text || candidate.visibleText),
         repairInstruction: normalizeText(candidate.repair_instruction || candidate.repairInstruction)
     };
 }
@@ -4103,7 +4222,7 @@ async function callLlmAgentDirectToolDecision(settings, payload, { hasToolHistor
             directToolFallback: true
         };
     }
-    const finalAnswer = normalizeText(response.content);
+    const finalAnswer = stripControlTags(response.content);
     if (!finalAnswer) {
         return {
             ok: false,
@@ -4373,12 +4492,12 @@ async function callLlmAgentDecision(settings, payload) {
         ? 'load_context'
         : toolCall
         ? 'tool'
-        : normalizeText(json.final_answer || json.answer || json.response || personaOutput?.text || personaOutput?.bubbleText)
+        : stripControlTags(json.final_answer || json.answer || json.response || personaOutput?.text || personaOutput?.bubbleText)
             ? 'final'
             : '';
     const action = normalizeAgentAction(json.action || json.next_action || json.nextAction, inferredAction);
-    const finalAnswer = normalizeText(json.final_answer || json.answer || json.response);
-    const blockedReason = normalizeText(json.blocked_reason || json.blockedReason || json.reason || json.error);
+    const finalAnswer = stripControlTags(json.final_answer || json.answer || json.response);
+    const blockedReason = stripControlTags(json.blocked_reason || json.blockedReason || json.reason || json.error);
     const exactAnswerSubmission = normalizeExactAnswerSubmission(
         json.exact_answer_submission ||
             json.exactAnswerSubmission ||
@@ -6220,7 +6339,7 @@ class HumanClawAgentRunner {
                     })), { source: 'exact_answer_gate' });
                 }
                 const exactAnswerSubmission = exactAnswerValidation.submission || null;
-                const displayText = decision.finalAnswer || decision.summary || '任务完成。';
+                const displayText = stripControlTags(decision.finalAnswer || decision.summary || '任务完成。');
                 const failureSurface = renderLatestToolFailureSurface({
                     stepResults,
                     message,
@@ -6247,10 +6366,10 @@ class HumanClawAgentRunner {
                     displayText: visibleText,
                     speechText: failureSurface
                         ? visibleText.replace(/\n/g, ' ')
-                        : normalizeText(decision.personaOutput?.speechText, visibleText.replace(/\n/g, ' ')),
+                        : stripControlTags(decision.personaOutput?.speechText || visibleText.replace(/\n/g, ' ')),
                     bubbleText: failureSurface
                         ? ''
-                        : normalizeText(decision.personaOutput?.bubbleText),
+                        : stripControlTags(decision.personaOutput?.bubbleText),
                     plan: [],
                     steps: stepResults,
                     events,
@@ -6259,9 +6378,9 @@ class HumanClawAgentRunner {
                     personaOutput: failureSurface
                         ? null
                         : {
-                              text: normalizeText(decision.personaOutput?.text || visibleText),
-                              speechText: normalizeText(decision.personaOutput?.speechText),
-                              bubbleText: normalizeText(decision.personaOutput?.bubbleText),
+                              text: stripControlTags(decision.personaOutput?.text || visibleText),
+                              speechText: stripControlTags(decision.personaOutput?.speechText),
+                              bubbleText: stripControlTags(decision.personaOutput?.bubbleText),
                               expression: normalizeText(decision.personaOutput?.expression),
                               action: normalizeText(decision.personaOutput?.action),
                               emotion: normalizeText(decision.personaOutput?.emotion),
@@ -6282,7 +6401,7 @@ class HumanClawAgentRunner {
             }
 
             if (decision.action === 'blocked') {
-                const displayText = decision.blockedReason || decision.finalAnswer || '我判断现在继续下去不太稳，先停住，等你给我补一点信息。';
+                const displayText = stripControlTags(decision.blockedReason || decision.finalAnswer || '我判断现在继续下去不太稳，先停住，等你给我补一点信息。');
                 const failureSurface = renderLatestToolFailureSurface({
                     stepResults,
                     message,
@@ -7578,6 +7697,7 @@ module.exports = {
     buildToolResultEvent,
     isExactAnswerExecutionMode,
     normalizeExactAnswerSubmission,
+    stripControlTags,
     validateExactAnswerSubmission,
     resolveAgentDecisionTimeoutMs
 };

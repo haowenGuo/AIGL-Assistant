@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const {
     TOOLS,
     buildSuggestedCallsFromSearchResults,
+    classifyYtDlpFailure,
     extractArxivCandidatesFromAtom,
     extractBingResults,
     extractDuckDuckGoHtmlResults,
@@ -26,7 +27,9 @@ const {
     rankLinksForResearch,
     readDocument,
     webExtractLinks,
-    webFetch
+    webFetch,
+    youtubeTranscript,
+    youtubeVideoSearch
 } = require('../scripts/mcp-aigl-research-server.cjs');
 
 async function withServer(handler, run) {
@@ -79,11 +82,34 @@ test('AIGL research MCP exposes Codex-aligned PDF/file tools', () => {
     assert.ok(names.includes('download_file'));
     assert.ok(names.includes('read_document'));
     assert.ok(names.includes('read_presentation'));
+    assert.ok(names.includes('youtube_video_search'));
+    assert.ok(names.includes('youtube_transcript'));
     assert.ok(searchTool.inputSchema.properties.backend);
     assert.ok(searchTool.inputSchema.properties.backends);
     assert.ok(searchTool.inputSchema.properties.backends.items.enum.includes('duckduckgo_html'));
     assert.ok(searchTool.inputSchema.properties.backends.items.enum.includes('github_repositories'));
     assert.ok(searchTool.description.includes('managed search backends'));
+});
+
+test('YouTube tools expose recovery affordance before broad web search', async () => {
+    const search = await youtubeVideoSearch({});
+    assert.equal(search.isError, true);
+    assert.equal(search.structuredContent.status, 'invalid_args');
+    assert.equal(search.structuredContent.suggestedNextCalls[0].tool, 'youtube_video_search');
+
+    const transcript = await youtubeTranscript({ video_id: 'L1vXCYZAYYM' });
+    assert.equal(transcript.isError, true);
+    assert.equal(transcript.structuredContent.status, 'invalid_args');
+    assert.equal(transcript.structuredContent.suggestedNextCalls[0].tool, 'youtube_video_search');
+    assert.match(transcript.content[0].text, /suggested_next_calls/);
+});
+
+test('yt-dlp failures classify YouTube anti-bot blocks as non-query problems', () => {
+    const failure = classifyYtDlpFailure('Sign in to confirm you are not a bot. Use --cookies-from-browser.');
+
+    assert.equal(failure.status, 'anti_bot_blocked');
+    assert.equal(failure.failureReason, 'anti_bot_blocked');
+    assert.match(failure.nextActions.join(' '), /cookies/i);
 });
 
 test('read_document extracts Word paragraphs and tables as structured JSON', async () => {
@@ -107,12 +133,15 @@ test('read_document extracts Word paragraphs and tables as structured JSON', asy
 
         const result = await readDocument({ path: docxPath });
         assert.equal(result.isError, undefined, result.content[0].text);
-        const payload = JSON.parse(result.content[0].text);
+        assert.match(result.content[0].text, /DOCUMENT_READ_COMPLETE/);
+        assert.match(result.content[0].text, /fullTextPath:/);
+        const payload = result.structuredContent.document;
         assert.equal(payload.paragraphs[0].text, 'Employees');
         assert.deepEqual(payload.tables[0].rows[0], ['Giver', 'Recipient']);
         assert.deepEqual(payload.tables[0].rows[1], ['Fred', 'Rebecca']);
         assert.equal(result.structuredContent.document.paragraphs[0].text, 'Employees');
         assert.deepEqual(result.structuredContent.document.tables[0].rows[1], ['Fred', 'Rebecca']);
+        assert.equal(result.structuredContent.completeness.fullDocumentRead, true);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -194,6 +223,8 @@ test('paper_metadata_lookup returns ranked scholarly metadata from OpenAlex and 
         assert.equal(payload.bestMatch.pdfUrl, 'https://example.org/pie-menus.pdf');
         assert.match(payload.nextActionHint, /prior papers/);
         assert.ok(payload.authorHistoryNextCalls.some((call) => call.args?.authorId === 'https://openalex.org/A1'));
+        assert.ok(payload.authorHistoryNextCalls.some((call) => call.args?.author === 'Antti Oulasvirta'));
+        assert.match(payload.authorDisambiguationHint, /bestMatch\.authors/);
         assert.equal(payload.suggestedNextCalls[0].tool, 'pdf_find_and_extract');
         assert.match(payload.suggestedNextCalls[0].args.query, /10\.1145\/2702613\.2732927/);
         assert.ok(payload.suggestedNextCalls.some((call) => call.args?.authorId === 'https://openalex.org/A1'));
@@ -202,6 +233,7 @@ test('paper_metadata_lookup returns ranked scholarly metadata from OpenAlex and 
         assert.equal(result.structuredContent.results[0].authors[1].name, 'Jussi Jokinen');
         assert.match(result.structuredContent.nextActionHint, /prior papers/);
         assert.ok(result.structuredContent.authorHistoryNextCalls.some((call) => call.args?.authorId === 'https://openalex.org/A1'));
+        assert.ok(result.structuredContent.authorHistoryNextCalls.some((call) => call.args?.author === 'Antti Oulasvirta'));
         assert.equal(result.structuredContent.suggestedNextCalls[0].tool, 'pdf_find_and_extract');
         assert.ok(result.content[0].text.indexOf('"bestMatch"') < result.content[0].text.indexOf('"suggestedNextCalls"'));
         assert.ok(result.content[0].text.indexOf('"authorHistoryNextCalls"') < result.content[0].text.indexOf('"suggestedNextCalls"'));
@@ -349,7 +381,12 @@ test('paper_metadata_lookup can list earlier works for an OpenAlex author id', a
 
         assert.equal(result.isError, undefined, result.content[0].text);
         const payload = JSON.parse(result.content[0].text);
+        assert.equal(payload.answerCandidate.answer, 'Mapping Human Oriented Information to Software Agents for Online Systems Usage');
         assert.equal(payload.answerCandidate.earliestWorkTitle, 'Mapping human-oriented information to software agents for online systems usage');
+        assert.deepEqual(payload.answerCandidate.titleVariants, [
+            'Mapping human-oriented information to software agents for online systems usage',
+            'Mapping Human Oriented Information to Software Agents for Online Systems Usage'
+        ]);
         assert.equal(payload.answerCandidate.earliestWorkYear, 2001);
         assert.equal(payload.answerCandidate.earliestWorkDate, '2001-01-01');
         assert.equal(payload.results.length, 2);

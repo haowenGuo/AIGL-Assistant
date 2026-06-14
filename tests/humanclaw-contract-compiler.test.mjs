@@ -335,6 +335,115 @@ test('Tool Acquisition Gateway executes trusted read-only OpenAPI exposure', asy
     }
 });
 
+test('Tool Acquisition Gateway classifies OpenAPI HTTP rate limits with recovery hints', async () => {
+    const workspaceRoot = await makeWorkspace('humanclaw-openapi-rate-limit-');
+    const server = await withHttpServer((_req, res) => {
+        res.statusCode = 429;
+        res.statusMessage = 'Too Many Requests';
+        res.setHeader('content-type', 'application/json');
+        res.setHeader('retry-after', '60');
+        res.end(JSON.stringify({ error: 'rate limited' }));
+    });
+    try {
+        const gateway = new HumanClawToolAcquisitionGateway({
+            workspaceRoot,
+            projectRoot: workspaceRoot,
+            stateDir: path.join(workspaceRoot, '.state', 'tool-acquisition')
+        });
+        await gateway.bulkExposeExternalTools({
+            includeMcpRegistry: false,
+            includeInstalledMcp: false,
+            trustCallable: true,
+            openapiOperations: [
+                {
+                    operationId: 'rateLimitedSearch',
+                    method: 'get',
+                    path: '/search',
+                    baseUrl: server.baseUrl,
+                    callable: true,
+                    summary: 'Search a rate limited external index.',
+                    parameters: [
+                        { name: 'q', in: 'query', required: true, schema: { type: 'string' }, description: 'Search query.' }
+                    ],
+                    whenToUse: ['Use for external metadata lookup.'],
+                    whenNotToUse: ['Do not keep retrying after HTTP 429.'],
+                    preconditions: ['Query is known.'],
+                    examples: [{ q: 'toolformer' }],
+                    badExamples: [{}],
+                    alternatives: ['Use another structured source when rate limited.'],
+                    errors: { rate_limited: { recoverable: true } },
+                    permissions: ['metadata.read']
+                }
+            ]
+        });
+        const result = await gateway.executeExposedExternalTool({
+            toolId: 'rateLimitedSearch',
+            args: { q: 'toolformer' }
+        });
+        assert.equal(result.status, 'http_error');
+        assert.equal(result.ok, false);
+        assert.equal(result.http.status, 429);
+        assert.equal(result.failureReason, 'rate_limited');
+        assert.equal(result.failure.retryAfter, '60');
+        assert.ok(result.nextActions.some((entry) => /alternate structured source/i.test(entry)));
+    } finally {
+        await server.close();
+    }
+});
+
+test('Tool Acquisition Gateway classifies OpenAPI forbidden responses with recovery hints', async () => {
+    const workspaceRoot = await makeWorkspace('humanclaw-openapi-forbidden-');
+    const server = await withHttpServer((_req, res) => {
+        res.statusCode = 403;
+        res.statusMessage = 'Forbidden';
+        res.setHeader('content-type', 'text/plain');
+        res.end('forbidden');
+    });
+    try {
+        const gateway = new HumanClawToolAcquisitionGateway({
+            workspaceRoot,
+            projectRoot: workspaceRoot,
+            stateDir: path.join(workspaceRoot, '.state', 'tool-acquisition')
+        });
+        await gateway.bulkExposeExternalTools({
+            includeMcpRegistry: false,
+            includeInstalledMcp: false,
+            trustCallable: true,
+            openapiOperations: [
+                {
+                    operationId: 'blockedArticlePage',
+                    method: 'get',
+                    path: '/doi/10.1145/example',
+                    baseUrl: server.baseUrl,
+                    callable: true,
+                    summary: 'Fetch a publisher article page that may block automated requests.',
+                    parameters: [],
+                    whenToUse: ['Use only when publisher page access is required.'],
+                    whenNotToUse: ['Do not keep retrying after HTTP 403.'],
+                    preconditions: ['Article URL is known.'],
+                    examples: [{}],
+                    badExamples: [{ q: 'broad search' }],
+                    alternatives: ['Use Crossref, OpenAlex, DOI metadata, or a library copy.'],
+                    errors: { forbidden_or_blocked: { recoverable: true } },
+                    permissions: ['publisher.read']
+                }
+            ]
+        });
+        const result = await gateway.executeExposedExternalTool({
+            toolId: 'blockedArticlePage',
+            args: {}
+        });
+        assert.equal(result.status, 'http_error');
+        assert.equal(result.ok, false);
+        assert.equal(result.http.status, 403);
+        assert.equal(result.failureReason, 'forbidden_or_blocked');
+        assert.match(result.message, /not a query wording problem/i);
+        assert.ok(result.nextActions.some((entry) => /official API|mirrored structured source/i.test(entry)));
+    } finally {
+        await server.close();
+    }
+});
+
 test('Tool Acquisition Gateway exposes callable OpenAPI adapters as virtual direct tools', async () => {
     const workspaceRoot = await makeWorkspace('humanclaw-openapi-virtual-direct-');
     const server = await withHttpServer((req, res) => {

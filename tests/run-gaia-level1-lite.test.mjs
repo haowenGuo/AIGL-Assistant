@@ -53,7 +53,7 @@ test('GAIA Level 1 Lite answer gate rejects explanatory finalAnswer text', () =>
     assert.equal(gate.status, 'rejected_visible_prose');
 });
 
-test('GAIA Level 1 Lite answer gate accepts only confident finalizer answers', () => {
+test('GAIA Level 1 Lite answer gate submits low-confidence finalizer answers with evidence status', () => {
     const response = {
         ok: true,
         displayText: 'I found the answer in the tool output.',
@@ -73,7 +73,7 @@ test('GAIA Level 1 Lite answer gate accepts only confident finalizer answers', (
     assert.equal(accepted.source, 'finalizer');
     assert.equal(accepted.answer, 'BaseLabelPropagation');
 
-    const rejected = buildFinalAnswerGate({
+    const lowConfidence = buildFinalAnswerGate({
         question: { question: 'Which algorithm is named?' },
         response,
         finalizer: {
@@ -83,8 +83,49 @@ test('GAIA Level 1 Lite answer gate accepts only confident finalizer answers', (
             reason: 'missing evidence'
         }
     });
-    assert.equal(rejected.ok, false);
-    assert.equal(rejected.status, 'rejected_low_confidence');
+    assert.equal(lowConfidence.ok, true);
+    assert.equal(lowConfidence.source, 'finalizer');
+    assert.equal(lowConfidence.answer, 'BaseLabelPropagation');
+    assert.equal(lowConfidence.status, 'accepted_low_confidence');
+    assert.equal(lowConfidence.evidence_status, 'low_confidence');
+});
+
+test('GAIA Level 1 Lite answer gate falls back to structured answerCandidates when evidence is incomplete', () => {
+    const gate = buildFinalAnswerGate({
+        question: { question: 'What adjective did both critics use?' },
+        response: {
+            ok: true,
+            displayText: 'I found a candidate in the PDF evidence.',
+            steps: [{
+                response: {
+                    ok: true,
+                    result: {
+                        structuredContent: {
+                            ok: true,
+                            status: 'completed',
+                            answerCandidates: [{
+                                answer: 'fluffy',
+                                score: 74,
+                                context: 'Both cited critics complain about increasingly fluffy dragons.'
+                            }]
+                        }
+                    }
+                }
+            }]
+        },
+        finalizer: {
+            ok: false,
+            status: 'missing_evidence',
+            answer: '',
+            confidence: 'low',
+            reason: 'missing evidence'
+        }
+    });
+    assert.equal(gate.ok, true);
+    assert.equal(gate.source, 'evidence_answer_candidate');
+    assert.equal(gate.answer, 'fluffy');
+    assert.equal(gate.status, 'accepted_missing_evidence');
+    assert.equal(gate.evidence_status, 'missing_evidence');
 });
 
 test('GAIA Level 1 Lite answer formatting removes units already specified by the question', () => {

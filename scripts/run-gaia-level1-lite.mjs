@@ -303,7 +303,6 @@ function acceptExactAnswerCandidate(answer, {
     question = {},
     source = 'candidate',
     confidence = '',
-    requireConfidence = false,
     reason = ''
 } = {}) {
     const formatted = formatSubmittedAnswerForQuestion(answer, question);
@@ -348,16 +347,6 @@ function acceptExactAnswerCandidate(answer, {
             reason: reason || 'candidate answer is not short exact-answer shaped'
         };
     }
-    if (requireConfidence && !['high', 'medium'].includes(normalizedConfidence)) {
-        return {
-            ok: false,
-            answer: '',
-            source,
-            status: 'rejected_low_confidence',
-            confidence: normalizedConfidence,
-            reason: reason || 'finalizer did not report high or medium confidence'
-        };
-    }
     return {
         ok: true,
         answer: formatted,
@@ -365,6 +354,144 @@ function acceptExactAnswerCandidate(answer, {
         status: 'accepted',
         confidence: normalizedConfidence,
         reason: reason || 'accepted exact-answer candidate'
+    };
+}
+
+function evidenceStatusFromFinalizer(finalizer = {}) {
+    const confidence = normalizeFinalizerConfidence(finalizer?.confidence);
+    const status = normalizeText(finalizer?.status);
+    if (status && status !== 'completed') {
+        return status;
+    }
+    if (confidence === 'low') {
+        return 'low_confidence';
+    }
+    if (confidence === 'unknown') {
+        return 'unknown_confidence';
+    }
+    return confidence ? 'sufficient' : '';
+}
+
+function markAcceptedWithEvidenceStatus(gate = {}, finalizer = {}, acceptedStatus = 'accepted_unverified') {
+    if (!gate.ok) {
+        return gate;
+    }
+    const evidenceStatus = evidenceStatusFromFinalizer(finalizer);
+    return {
+        ...gate,
+        status: evidenceStatus && evidenceStatus !== 'sufficient' ? acceptedStatus : gate.status,
+        evidence_status: evidenceStatus
+    };
+}
+
+function extractAnswerTextFromStructuredCandidate(candidate) {
+    if (typeof candidate === 'string') {
+        return candidate;
+    }
+    if (!candidate || typeof candidate !== 'object') {
+        return '';
+    }
+    return candidate.answer ||
+        candidate.final_answer ||
+        candidate.finalAnswer ||
+        candidate.exact_answer ||
+        candidate.exactAnswer ||
+        '';
+}
+
+function collectStructuredAnswerCandidateTexts(value, depth = 0) {
+    const parsed = parseJsonLike(value);
+    if (!parsed || typeof parsed !== 'object' || depth > 8) {
+        return [];
+    }
+    const answers = [];
+    const pushCandidate = (candidate) => {
+        const answer = extractAnswerTextFromStructuredCandidate(candidate);
+        if (answer) {
+            answers.push(answer);
+        }
+    };
+    if (Array.isArray(parsed.answerCandidates)) {
+        for (const candidate of parsed.answerCandidates.slice(0, 10)) {
+            pushCandidate(candidate);
+        }
+    }
+    if (parsed.answerCandidate !== undefined) {
+        pushCandidate(parsed.answerCandidate);
+    }
+    if (Array.isArray(parsed.candidates)) {
+        for (const candidate of parsed.candidates.slice(0, 10)) {
+            if (candidate && typeof candidate === 'object' && /answer/i.test(Object.keys(candidate).join(' '))) {
+                pushCandidate(candidate);
+            }
+        }
+    }
+    const childKeys = [
+        'body',
+        'data',
+        'result',
+        'details',
+        'structuredContent',
+        'structured_content',
+        'document',
+        'content'
+    ];
+    for (const key of childKeys) {
+        const child = parsed[key];
+        if (Array.isArray(child)) {
+            for (const item of child.slice(0, 6)) {
+                answers.push(...collectStructuredAnswerCandidateTexts(item?.text ?? item, depth + 1));
+            }
+        } else if (child && typeof child === 'object') {
+            answers.push(...collectStructuredAnswerCandidateTexts(child, depth + 1));
+        } else if (typeof child === 'string') {
+            answers.push(...collectStructuredAnswerCandidateTexts(child, depth + 1));
+        }
+    }
+    return answers;
+}
+
+function collectEvidenceAnswerCandidateTexts(response = {}) {
+    const answers = [];
+    const seen = new Set();
+    for (const step of Array.isArray(response.steps) ? response.steps : []) {
+        if (step.response?.ok !== true) {
+            continue;
+        }
+        for (const value of collectStepObservationValues(step)) {
+            for (const answer of collectStructuredAnswerCandidateTexts(value)) {
+                const normalized = normalizeText(answer);
+                const key = normalized.toLowerCase();
+                if (normalized && !seen.has(key)) {
+                    seen.add(key);
+                    answers.push(normalized);
+                }
+            }
+        }
+    }
+    return answers;
+}
+
+function acceptEvidenceAnswerCandidate({ question = {}, response = {}, finalizer = null } = {}) {
+    for (const answer of collectEvidenceAnswerCandidateTexts(response)) {
+        const gate = acceptExactAnswerCandidate(answer, {
+            question,
+            source: 'evidence_answer_candidate',
+            confidence: finalizer?.confidence,
+            reason: 'accepted explicit answerCandidate from structured tool evidence'
+        });
+        if (gate.ok) {
+            return markAcceptedWithEvidenceStatus(gate, finalizer, 'accepted_missing_evidence');
+        }
+    }
+    return {
+        ok: false,
+        answer: '',
+        source: 'evidence_answer_candidate',
+        status: 'missing_exact_answer',
+        confidence: normalizeFinalizerConfidence(finalizer?.confidence),
+        evidence_status: evidenceStatusFromFinalizer(finalizer),
+        reason: 'no explicit structured answerCandidate was accepted'
     };
 }
 
@@ -388,6 +515,19 @@ function buildFinalAnswerGate({ question = {}, response = {}, finalizer = null }
             reason: direct.reason || 'no accepted exact answer and finalizer has not run'
         };
     }
+    const finalizerGate = acceptExactAnswerCandidate(finalizer.answer, {
+        question,
+        source: 'finalizer',
+        confidence: finalizer.confidence,
+        reason: finalizer.reason || 'accepted from evidence finalizer'
+    });
+    if (finalizerGate.ok) {
+        return markAcceptedWithEvidenceStatus(finalizerGate, finalizer, 'accepted_low_confidence');
+    }
+    const evidenceCandidate = acceptEvidenceAnswerCandidate({ question, response, finalizer });
+    if (evidenceCandidate.ok) {
+        return evidenceCandidate;
+    }
     if (!finalizer.ok) {
         return {
             ok: false,
@@ -398,13 +538,10 @@ function buildFinalAnswerGate({ question = {}, response = {}, finalizer = null }
             reason: finalizer.reason || finalizer.error || 'finalizer did not produce an answer'
         };
     }
-    return acceptExactAnswerCandidate(finalizer.answer, {
-        question,
-        source: 'finalizer',
-        confidence: finalizer.confidence,
-        requireConfidence: true,
-        reason: finalizer.reason || 'accepted from evidence finalizer'
-    });
+    return {
+        ...finalizerGate,
+        evidence_status: evidenceStatusFromFinalizer(finalizer)
+    };
 }
 
 function extractJsonObject(text) {

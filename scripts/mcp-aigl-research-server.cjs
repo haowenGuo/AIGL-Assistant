@@ -90,6 +90,29 @@ function errorResult(message, details = {}) {
     };
 }
 
+function actionableErrorResult(message, details = {}) {
+    const lines = [
+        message,
+        details.status ? `status=${details.status}` : '',
+        details.failureReason ? `failure_reason=${details.failureReason}` : '',
+        details.message ? `diagnosis=${details.message}` : ''
+    ].filter(Boolean);
+    if (Array.isArray(details.nextActions) && details.nextActions.length) {
+        lines.push('next_actions:');
+        details.nextActions.forEach((action, index) => lines.push(`${index + 1}. ${action}`));
+    }
+    if (Array.isArray(details.suggestedNextCalls) && details.suggestedNextCalls.length) {
+        lines.push('suggested_next_calls:');
+        details.suggestedNextCalls.forEach((call, index) => {
+            lines.push(`${index + 1}. ${call.tool} ${JSON.stringify(call.args || {})}`);
+        });
+    }
+    return {
+        ...errorResult(message, details),
+        content: [{ type: 'text', text: lines.join('\n') }]
+    };
+}
+
 function isPdfContentType(contentType = '') {
     return /application\/pdf|application\/x-pdf/i.test(contentType);
 }
@@ -2688,6 +2711,39 @@ function compactPaperMetadataCall(call = {}) {
     });
 }
 
+function academicTitleCase(value = '') {
+    const text = normalizeString(value).replace(/([A-Za-z])[-‐‑‒–—]([A-Za-z])/g, '$1 $2');
+    if (!text) {
+        return '';
+    }
+    const smallWords = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in', 'nor', 'of', 'on', 'or', 'per', 'the', 'to', 'vs', 'via', 'with']);
+    const words = text.split(/(\s+)/);
+    let wordIndex = 0;
+    const totalWords = words.filter((part) => /\S/.test(part)).length;
+    return words.map((part) => {
+        if (!/\S/.test(part)) {
+            return part;
+        }
+        wordIndex += 1;
+        return part.split(/([/:()[\]{}])/).map((segment) => {
+            if (!/[A-Za-z]/.test(segment)) {
+                return segment;
+            }
+            const lower = segment.toLowerCase();
+            if (wordIndex > 1 && wordIndex < totalWords && smallWords.has(lower)) {
+                return lower;
+            }
+            return lower.replace(/^[a-z]/, (char) => char.toUpperCase());
+        }).join('');
+    }).join('');
+}
+
+function paperTitleVariants(value = '') {
+    const original = normalizeString(value);
+    const titled = academicTitleCase(original);
+    return [...new Set([original, titled].filter(Boolean))];
+}
+
 function derivePaperMetadataAffordances(payload = {}) {
     const suggestedCalls = Array.isArray(payload.suggestedNextCalls)
         ? payload.suggestedNextCalls.slice(0, 5).map((call) => compactPaperMetadataCall(call)).filter(Boolean)
@@ -2697,23 +2753,31 @@ function derivePaperMetadataAffordances(payload = {}) {
             normalizeString(call.args?.authorId)
     );
     const answerCandidate = payload.authorId && payload.bestMatch
-        ? pruneEmptyDeep({
-            earliestWorkTitle: normalizeString(payload.bestMatch.title),
-            earliestWorkYear: Number(payload.bestMatch.year) || undefined,
-            earliestWorkDate: normalizeString(payload.bestMatch.publicationDate),
-            doi: normalizeString(payload.bestMatch.doi),
-            venue: normalizeString(payload.bestMatch.venue),
-            landingUrl: normalizeString(payload.bestMatch.landingUrl || payload.bestMatch.url),
-            pdfUrl: normalizeString(payload.bestMatch.pdfUrl),
-            reason: payload.beforeYear
-                ? `Earliest returned work before ${payload.beforeYear}`
-                : 'Earliest returned work for this author'
-        })
+        ? (() => {
+            const variants = paperTitleVariants(payload.bestMatch.title);
+            return pruneEmptyDeep({
+                answer: variants[1] || variants[0],
+                earliestWorkTitle: normalizeString(payload.bestMatch.title),
+                titleVariants: variants.length > 1 ? variants : undefined,
+                earliestWorkYear: Number(payload.bestMatch.year) || undefined,
+                earliestWorkDate: normalizeString(payload.bestMatch.publicationDate),
+                doi: normalizeString(payload.bestMatch.doi),
+                venue: normalizeString(payload.bestMatch.venue),
+                landingUrl: normalizeString(payload.bestMatch.landingUrl || payload.bestMatch.url),
+                pdfUrl: normalizeString(payload.bestMatch.pdfUrl),
+                reason: payload.beforeYear
+                    ? `Earliest returned work before ${payload.beforeYear}`
+                    : 'Earliest returned work for this author'
+            });
+        })()
         : undefined;
     return pruneEmptyDeep({
         answerCandidate,
         nextActionHint: authorHistoryNextCalls.length
-            ? 'If the question asks which author had prior papers, earliest work, or first paper, call authorHistoryNextCalls before broad web_search.'
+            ? 'If the question asks which author had prior papers, earliest work, or first paper, call authorHistoryNextCalls exactly as provided. Do not copy authorId values from non-bestMatch results.'
+            : undefined,
+        authorDisambiguationHint: authorHistoryNextCalls.length
+            ? 'The authorIds in authorHistoryNextCalls are scoped to bestMatch.authors. Other search results may contain off-target authors.'
             : undefined,
         authorHistoryNextCalls,
         suggestedNextCalls: suggestedCalls
@@ -2730,6 +2794,7 @@ function buildPaperMetadataText(payload = {}) {
             : (payload.author || payload.year || payload.topic || payload.venue ? 'bibliographic_lookup' : 'paper_lookup'),
         answerCandidate: affordances.answerCandidate,
         nextActionHint: affordances.nextActionHint,
+        authorDisambiguationHint: affordances.authorDisambiguationHint,
         bestMatch,
         authorHistoryNextCalls: affordances.authorHistoryNextCalls,
         suggestedNextCalls: affordances.suggestedNextCalls,
@@ -2981,6 +3046,7 @@ async function paperMetadataLookup(args = {}) {
             tool: 'paper_metadata_lookup',
             args: {
                 authorId: author.openAlexId,
+                author: author.name,
                 beforeYear: best?.year || undefined,
                 maxResults
             },
@@ -3994,6 +4060,92 @@ function runProcess(command, args, options = {}) {
     });
 }
 
+function classifyYtDlpFailure(stderr = '') {
+    const text = String(stderr || '');
+    if (/sign in to confirm|not a bot|captcha|cookies-from-browser|cookies/i.test(text)) {
+        return {
+            status: 'anti_bot_blocked',
+            failureReason: 'anti_bot_blocked',
+            message: 'YouTube/yt-dlp was blocked by anti-bot or requires browser cookies.',
+            nextActions: [
+                'Retry with allow_cookies=true and cookies_from_browser set to an installed browser if the user permits cookie access.',
+                'Use a video frame sampling or ASR backend if video/audio download is available.',
+                'Do not keep rewriting web_search queries for the same YouTube video.'
+            ]
+        };
+    }
+    if (/ffmpeg|ffprobe/i.test(text)) {
+        return {
+            status: 'missing_dependency',
+            failureReason: 'missing_ffmpeg',
+            message: 'Video/audio fallback needs ffmpeg/ffprobe installed.',
+            nextActions: ['Install ffmpeg, then rerun media smoke before exposing frame/ASR fallback.']
+        };
+    }
+    if (/no subtitles|subtitles.*unavailable|unable to download video subtitles|no automatic captions/i.test(text)) {
+        return {
+            status: 'transcript_unavailable',
+            failureReason: 'transcript_unavailable',
+            message: 'No subtitles or automatic captions were available.',
+            nextActions: ['Use audio ASR or video frame sampling instead of retrying transcript.']
+        };
+    }
+    return {
+        status: 'execution_failed',
+        failureReason: 'yt_dlp_failed',
+        message: 'yt-dlp failed for this video operation.',
+        nextActions: ['Inspect stderr once, then switch backend instead of looping the same call.']
+    };
+}
+
+function renderDocumentMarkdown(document = {}) {
+    const lines = [
+        '# DOCUMENT_READ_COMPLETE',
+        '',
+        `path: ${document.path || ''}`,
+        `paragraph_count: ${Number(document.paragraph_count || 0)}`,
+        `table_count: ${Number(document.table_count || 0)}`,
+        'truncated: false',
+        '',
+        'Use structuredContent.document.paragraphs and structuredContent.document.tables directly. Do not read the raw DOCX/ZIP unless this tool reports an error.',
+        '',
+        '## Paragraphs'
+    ];
+    for (const paragraph of document.paragraphs || []) {
+        lines.push(`[${paragraph.index}] ${paragraph.text}`);
+    }
+    if (!Array.isArray(document.paragraphs) || !document.paragraphs.length) {
+        lines.push('(none)');
+    }
+    lines.push('', '## Tables');
+    for (const table of document.tables || []) {
+        const rows = Array.isArray(table.rows) ? table.rows : [];
+        lines.push(`Table ${Number(table.index || 0) + 1} rows=${rows.length}`);
+        for (const row of rows) {
+            lines.push(row.map((cell) => String(cell || '').replace(/\s+/g, ' ').trim()).join(' | '));
+        }
+        lines.push('');
+    }
+    if (!Array.isArray(document.tables) || !document.tables.length) {
+        lines.push('(none)');
+    }
+    return lines.join('\n').trim();
+}
+
+async function writeMcpArtifact(kind = 'artifact', baseName = 'artifact', text = '') {
+    const root = normalizeString(process.env.AIGL_MCP_ARTIFACT_DIR) ||
+        path.join(process.cwd(), '.humanclaw-state', 'mcp-artifacts', kind);
+    await fs.mkdir(root, { recursive: true });
+    const safeName = normalizeString(baseName, kind)
+        .replace(/[^a-zA-Z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80) || kind;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const artifactPath = path.join(root, `${safeName}-${stamp}.md`);
+    await fs.writeFile(artifactPath, text, 'utf8');
+    return artifactPath;
+}
+
 async function fetchText(url, timeoutMs = 60000) {
     const code = `
 import json, requests, sys
@@ -4232,13 +4384,28 @@ print(json.dumps({
         status: 'completed',
         path: filePath,
         paragraphCount: Number(document.paragraph_count || 0),
-        tableCount: Number(document.table_count || 0)
+        tableCount: Number(document.table_count || 0),
+        truncated: false,
+        completeness: {
+            paragraphsReturned: Number(document.paragraph_count || 0),
+            tablesReturned: Number(document.table_count || 0),
+            tableRowsReturned: (document.tables || []).reduce((sum, table) => sum + (Array.isArray(table.rows) ? table.rows.length : 0), 0),
+            fullDocumentRead: true
+        },
+        nextActionHint: 'Use structuredContent.document directly and submit/finalize if it contains the needed evidence; do not fall back to raw DOCX/ZIP reads after read_document completes.'
     };
+    const markdown = renderDocumentMarkdown(document);
+    const fullTextPath = await writeMcpArtifact('documents', path.basename(filePath, path.extname(filePath)), markdown);
     return {
-        content: [{ type: 'text', text }],
+        content: [{
+            type: 'text',
+            text: `${markdown}\n\nfullTextPath: ${fullTextPath}`
+        }],
         structuredContent: {
             ok: true,
             ...details,
+            fullTextPath,
+            fullText: markdown,
             document,
             ...document
         },
@@ -4423,19 +4590,173 @@ async function describeImage(args = {}) {
     });
 }
 
+async function youtubeVideoSearch(args = {}) {
+    const explicitUrl = normalizeString(args.url || args.videoUrl || args.video_url);
+    const query = normalizeString(args.query || args.q || args.title || args.search || args.keywords);
+    const channel = normalizeString(args.channel || args.uploader);
+    const maxResults = clampNumber(args.maxResults || args.max_results || args.limit, 5, 1, 10);
+    if (!explicitUrl && !query) {
+        return actionableErrorResult('youtube_video_search requires query/title or a YouTube URL', {
+            status: 'invalid_args',
+            suggestedNextCalls: [
+                {
+                    tool: 'youtube_video_search',
+                    args: { query: '<video title or channel keywords>', maxResults: 5 }
+                }
+            ]
+        });
+    }
+    const searchQuery = explicitUrl || [query, channel].filter(Boolean).join(' ');
+    const code = `
+import json, sys, yt_dlp
+target = sys.argv[1]
+max_results = int(sys.argv[2])
+is_url = target.startswith("http://") or target.startswith("https://")
+ydl_target = target if is_url else f"ytsearch{max_results}:{target}"
+ydl_opts = {
+    "quiet": True,
+    "skip_download": True,
+    "noplaylist": True,
+    "extract_flat": True,
+}
+with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    info = ydl.extract_info(ydl_target, download=False)
+entries = info.get("entries") if isinstance(info, dict) and info.get("entries") is not None else [info]
+videos = []
+for entry in entries or []:
+    if not entry:
+        continue
+    vid = entry.get("id") or ""
+    raw_url = entry.get("webpage_url") or entry.get("url") or ""
+    if raw_url and raw_url.startswith("http"):
+        url = raw_url
+    elif vid:
+        url = f"https://www.youtube.com/watch?v={vid}"
+    else:
+        url = ""
+    videos.append({
+        "id": vid,
+        "url": url,
+        "title": entry.get("title") or "",
+        "uploader": entry.get("uploader") or entry.get("channel") or "",
+        "channel": entry.get("channel") or entry.get("uploader") or "",
+        "duration": entry.get("duration"),
+        "view_count": entry.get("view_count"),
+        "description": (entry.get("description") or "")[:500],
+    })
+print(json.dumps({"query": target, "videos": videos[:max_results]}, ensure_ascii=False))
+`.trim();
+    const result = await runProcess('python', ['-c', code, searchQuery, String(maxResults)], {
+        timeoutMs: args.timeoutMs || 180000
+    });
+    if (result.exitCode !== 0) {
+        const failure = classifyYtDlpFailure(result.stderr);
+        return actionableErrorResult('youtube_video_search failed', {
+            ...failure,
+            status: result.timedOut ? 'timeout' : failure.status,
+            query: searchQuery,
+            stderr: result.stderr.slice(0, 3000),
+            nextActions: failure.nextActions,
+            suggestedNextCalls: [
+                {
+                    tool: 'web_search',
+                    args: { query: `${query || searchQuery} site:youtube.com`, maxResults: 5 }
+                }
+            ]
+        });
+    }
+    let payload;
+    try {
+        payload = JSON.parse(result.stdout || '{}');
+    } catch (error) {
+        return errorResult('youtube_video_search returned invalid JSON', {
+            status: 'invalid_tool_output',
+            query: searchQuery,
+            error: error.message,
+            stdout: result.stdout.slice(0, 1000)
+        });
+    }
+    const videos = Array.isArray(payload.videos) ? payload.videos.filter((video) => normalizeString(video.url)) : [];
+    if (!videos.length) {
+        return actionableErrorResult('youtube_video_search found no videos', {
+            status: 'no_results',
+            query: searchQuery,
+            suggestedNextCalls: [
+                {
+                    tool: 'web_search',
+                    args: { query: `${query || searchQuery} site:youtube.com`, maxResults: 5 }
+                }
+            ]
+        });
+    }
+    const suggestedNextCalls = [
+        {
+            tool: 'youtube_transcript',
+            args: { url: videos[0].url, language: normalizeString(args.language || args.lang, 'en') }
+        }
+    ];
+    const lines = [
+        'YouTube search results:',
+        ...videos.map((video, index) => `${index + 1}. ${video.title || '(untitled)'} | ${video.channel || video.uploader || 'unknown channel'} | ${video.url}`),
+        '',
+        `Suggested next calls:`,
+        `1. youtube_transcript ${JSON.stringify(suggestedNextCalls[0].args)}`
+    ];
+    return textResult(lines.join('\n'), {
+        status: 'completed',
+        query: searchQuery,
+        videos,
+        suggestedNextCalls
+    });
+}
+
 async function youtubeTranscript(args = {}) {
-    const url = normalizeString(args.url || args.videoUrl || args.video_url);
+    let url = normalizeString(args.url || args.videoUrl || args.video_url);
+    const query = normalizeString(args.query || args.q || args.title || args.search || args.keywords);
+    if (!url && query) {
+        const resolved = await youtubeVideoSearch({
+            ...args,
+            query,
+            maxResults: 1
+        });
+        const candidate = resolved.structuredContent?.videos?.[0]?.url;
+        if (candidate) {
+            url = candidate;
+        } else {
+            return {
+                ...resolved,
+                content: [{
+                    type: 'text',
+                    text: `${resolved.content?.[0]?.text || 'youtube_video_search failed'}\n\nyoutube_transcript could not resolve a video URL from query/title.`
+                }]
+            };
+        }
+    }
     if (!/^https?:\/\//i.test(url) || !/youtu\.be|youtube\.com/i.test(url)) {
-        return errorResult('youtube_transcript requires a YouTube URL');
+        return actionableErrorResult('youtube_transcript requires a YouTube URL', {
+            status: 'invalid_args',
+            suggestedNextCalls: [
+                {
+                    tool: 'youtube_video_search',
+                    args: { query: '<video title or channel keywords>', maxResults: 5 }
+                }
+            ]
+        });
     }
     const language = normalizeString(args.language || args.lang, 'en');
     const maxChars = clampNumber(args.maxChars || args.max_chars, 12000, 1000, 60000);
+    const allowCookies = args.allow_cookies === true || args.allowCookies === true;
+    const cookiesFromBrowser = normalizeString(args.cookies_from_browser || args.cookiesFromBrowser || args.browser);
     const code = `
 import json, re, sys, requests, yt_dlp
 url = sys.argv[1]
 language = sys.argv[2]
 max_chars = int(sys.argv[3])
+allow_cookies = sys.argv[4].lower() == "true"
+cookies_from_browser = sys.argv[5]
 ydl_opts = {"quiet": True, "skip_download": True, "noplaylist": True}
+if allow_cookies and cookies_from_browser:
+    ydl_opts["cookiesfrombrowser"] = (cookies_from_browser,)
 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
     info = ydl.extract_info(url, download=False)
 def pick_caption(captions):
@@ -4488,13 +4809,60 @@ payload = {
 }
 print(json.dumps(payload, ensure_ascii=False))
 `.trim();
-    const result = await runProcess('python', ['-c', code, url, language, String(maxChars)], {
+    const result = await runProcess('python', ['-c', code, url, language, String(maxChars), String(allowCookies), cookiesFromBrowser], {
         timeoutMs: args.timeoutMs || 240000
     });
     if (result.exitCode !== 0) {
-        return errorResult('youtube_transcript failed', { url, stderr: result.stderr.slice(0, 3000) });
+        const failure = classifyYtDlpFailure(result.stderr);
+        return actionableErrorResult('youtube_transcript failed', {
+            ...failure,
+            status: result.timedOut ? 'timeout' : failure.status,
+            url,
+            stderr: result.stderr.slice(0, 3000),
+            nextActions: failure.nextActions,
+            suggestedNextCalls: [
+                {
+                    tool: 'youtube_video_search',
+                    args: { url, maxResults: 1 }
+                },
+                {
+                    tool: 'web_search',
+                    args: { query: `${url} transcript`, maxResults: 5 }
+                }
+            ]
+        });
     }
-    return textResult(result.stdout.trim(), { status: 'completed', url });
+    let payload = null;
+    try {
+        payload = JSON.parse(result.stdout || '{}');
+    } catch {}
+    const transcript = normalizeString(payload?.transcript);
+    const details = {
+        status: transcript ? 'completed' : 'transcript_unavailable',
+        url,
+        metadata: payload ? {
+            title: payload.title || '',
+            duration: payload.duration,
+            uploader: payload.uploader || '',
+            description: payload.description || ''
+        } : {},
+        transcriptAvailable: Boolean(transcript),
+        evidenceGap: transcript ? '' : 'No subtitles or automatic captions were available in yt-dlp metadata.',
+        suggestedNextCalls: transcript ? [] : [
+            {
+                tool: 'youtube_video_search',
+                args: { url, maxResults: 1 }
+            },
+            {
+                tool: 'web_search',
+                args: { query: `${payload?.title || url} transcript species visual evidence`, maxResults: 5 }
+            }
+        ]
+    };
+    const text = result.stdout.trim() + (transcript
+        ? ''
+        : `\n\nevidence_gap=${details.evidenceGap}\nSuggested next calls:\n1. youtube_video_search ${JSON.stringify(details.suggestedNextCalls[0].args)}\n2. web_search ${JSON.stringify(details.suggestedNextCalls[1].args)}`);
+    return textResult(text, details);
 }
 
 const TOOLS = [
@@ -4752,15 +5120,41 @@ const TOOLS = [
         }
     },
     {
+        name: 'youtube_video_search',
+        description: 'Search or resolve YouTube videos with yt-dlp using title, channel, or URL. Use this when a YouTube/video task gives only a title/channel or when fetching youtube.com search pages would be low-value.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'Video title/channel keywords to search.' },
+                q: { type: 'string', description: 'Compatibility alias for query.' },
+                title: { type: 'string', description: 'Compatibility alias for query.' },
+                search: { type: 'string', description: 'Compatibility alias for query.' },
+                url: { type: 'string', description: 'Known YouTube URL to resolve metadata for.' },
+                videoUrl: { type: 'string', description: 'Compatibility alias for url.' },
+                video_url: { type: 'string', description: 'Compatibility alias for url.' },
+                channel: { type: 'string', description: 'Optional channel/uploader name to add to search terms.' },
+                maxResults: { type: 'number', description: 'Maximum videos to return, 1-10.' },
+                max_results: { type: 'number', description: 'Compatibility alias for maxResults.' },
+                timeoutMs: { type: 'number' }
+            }
+        }
+    },
+    {
         name: 'youtube_transcript',
-        description: 'Fetch YouTube metadata and available subtitles/auto-captions with yt-dlp. Use for YouTube questions before guessing from search snippets.',
+        description: 'Fetch YouTube metadata and available subtitles/auto-captions with yt-dlp. Use for known YouTube URLs before guessing from search snippets; if only a title/query is known, this can resolve a URL through youtube_video_search first.',
         inputSchema: {
             type: 'object',
             properties: {
                 url: { type: 'string' },
                 videoUrl: { type: 'string' },
                 video_url: { type: 'string' },
+                query: { type: 'string' },
+                q: { type: 'string' },
+                title: { type: 'string' },
+                search: { type: 'string' },
                 language: { type: 'string' },
+                allow_cookies: { type: 'boolean', description: 'Allow yt-dlp to use browser cookies when cookies_from_browser is provided.' },
+                cookies_from_browser: { type: 'string', description: 'Browser name for yt-dlp cookies-from-browser, for example chrome, edge, firefox.' },
                 maxChars: { type: 'number' },
                 timeoutMs: { type: 'number' }
             }
@@ -4787,6 +5181,7 @@ async function handleToolCall(request) {
     if (name === 'read_presentation') return await readPresentation(args);
     if (name === 'transcribe_audio') return await transcribeAudio(args);
     if (name === 'describe_image') return await describeImage(args);
+    if (name === 'youtube_video_search') return await youtubeVideoSearch(args);
     if (name === 'youtube_transcript') return await youtubeTranscript(args);
     return errorResult(`Unknown tool: ${name}`);
 }
@@ -4849,6 +5244,7 @@ if (require.main === module) {
 module.exports = {
     TOOLS,
     buildSuggestedCallsFromSearchResults,
+    classifyYtDlpFailure,
     downloadFile,
     extractBingResults,
     extractArxivCandidatesFromAtom,
@@ -4872,5 +5268,7 @@ module.exports = {
     SEARCH_BACKENDS,
     webExtractLinks,
     webFetch,
-    webSearch
+    webSearch,
+    youtubeTranscript,
+    youtubeVideoSearch
 };

@@ -426,6 +426,9 @@ export class HumanClawDesktopChatService {
 
         const status = await this.gateway.getStatus();
         if (!status?.running) {
+            if (status?.startError) {
+                throw new Error(`HumanClaw Gateway 启动失败：${status.startError}`);
+            }
             throw new Error('HumanClaw Gateway 尚未启动');
         }
         return status;

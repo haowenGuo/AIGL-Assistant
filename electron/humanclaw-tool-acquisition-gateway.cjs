@@ -1,6 +1,7 @@
 const fsp = require('fs/promises');
 const path = require('path');
 const { createHash } = require('crypto');
+const { spawn } = require('child_process');
 const { listToolContractSummaries } = require('./humanclaw-tool-contracts.cjs');
 const { listHumanClawSkills } = require('./humanclaw-skills.cjs');
 const {
@@ -9,6 +10,14 @@ const {
     lintAiglContract,
     buildContractPromptCard
 } = require('./humanclaw-contract-compiler.cjs');
+const {
+    STANDARD_TOOL_PACKS,
+    listStandardToolPacks,
+    searchStandardToolPacks,
+    collectStandardToolPackContracts,
+    collectStandardToolPackAuthProfiles,
+    publicReadonlyOpenApiOperationsFromStandardPacks
+} = require('./aigl-standard-tool-packs.cjs');
 
 const OFFICIAL_MCP_REGISTRY_URL = 'https://registry.modelcontextprotocol.io/v0/servers';
 const LEARNING_SCHEMA_VERSION = 1;
@@ -16,6 +25,36 @@ const EXTERNAL_EXPOSURE_VERSION = 1;
 const EXTERNAL_AUTH_PROFILE_VERSION = 1;
 const SAFE_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const DEFAULT_COMPOSIO_API_BASE_URL = 'https://backend.composio.dev/api/v3';
+const LOCAL_ADAPTER_OUTPUT_LIMIT = 10 * 1024 * 1024;
+const LOCAL_DOCUMENT_ADAPTERS = Object.freeze({
+    docling_convert_document: Object.freeze({
+        id: 'local_docling_converter',
+        type: 'local_document_converter',
+        runtime: 'python',
+        packageName: 'docling',
+        importName: 'docling',
+        commandEnvVar: 'AIGL_PYTHON',
+        outputFormat: 'markdown'
+    }),
+    markitdown_convert_document: Object.freeze({
+        id: 'local_markitdown_converter',
+        type: 'local_document_converter',
+        runtime: 'python',
+        packageName: 'markitdown',
+        importName: 'markitdown',
+        commandEnvVar: 'AIGL_PYTHON',
+        outputFormat: 'markdown'
+    }),
+    python_document_extract: Object.freeze({
+        id: 'local_python_document_extractor',
+        type: 'local_document_converter',
+        runtime: 'python',
+        packageName: 'python-docx,pypdf',
+        importNames: Object.freeze(['docx', 'pypdf']),
+        commandEnvVar: 'AIGL_PYTHON',
+        outputFormat: 'markdown'
+    })
+});
 
 const CORE_TOOL_BUNDLES = Object.freeze([
     Object.freeze({
@@ -366,6 +405,263 @@ function redactHeaders(headers = {}) {
     return redacted;
 }
 
+function extractResponseHeaders(headers) {
+    const wanted = new Set([
+        'retry-after',
+        'x-ratelimit-limit',
+        'x-ratelimit-remaining',
+        'x-ratelimit-reset',
+        'x-rate-limit-limit',
+        'x-rate-limit-remaining',
+        'x-rate-limit-reset'
+    ]);
+    const result = {};
+    if (!headers?.forEach) {
+        return result;
+    }
+    headers.forEach((value, key) => {
+        const lower = String(key).toLowerCase();
+        if (wanted.has(lower)) {
+            result[lower] = value;
+        }
+    });
+    return result;
+}
+
+function classifyHttpFailure(status, exposure = {}, responseHeaders = {}) {
+    const provider = normalizeString(exposure.source?.name || exposure.provider || exposure.source?.provider || exposure.toolId || 'external_api');
+    if (status === 429) {
+        return {
+            reason: 'rate_limited',
+            message: `${provider} returned HTTP 429 rate limit. Do not retry in a tight loop.`,
+            retryAfter: responseHeaders['retry-after'] || '',
+            nextActions: [
+                'Switch to an alternate structured source if one is available.',
+                'Use an authenticated API profile when the provider supports one.',
+                'Retry only after the provider rate-limit window resets.'
+            ]
+        };
+    }
+    if (status === 403) {
+        return {
+            reason: 'forbidden_or_blocked',
+            message: `${provider} returned HTTP 403 forbidden. This is usually access policy, bot protection, missing auth, or a blocked endpoint, not a query wording problem.`,
+            nextActions: [
+                'Switch to an official API or mirrored structured source.',
+                'Use an authenticated profile when the task requires this provider.',
+                'Do not keep rewriting the same web request against the blocked endpoint.'
+            ]
+        };
+    }
+    if (status === 401) {
+        return {
+            reason: 'authentication_required',
+            message: `${provider} returned HTTP 401 authentication required.`,
+            nextActions: ['Configure the required auth profile, then rerun smoke before exposing as callable.']
+        };
+    }
+    if (status >= 500) {
+        return {
+            reason: 'provider_unavailable',
+            message: `${provider} returned HTTP ${status}. Treat this as provider/server instability.`,
+            nextActions: ['Retry once with backoff, then switch source if the task can be solved another way.']
+        };
+    }
+    if (status >= 400) {
+        return {
+            reason: 'http_client_error',
+            message: `${provider} returned HTTP ${status}. Check required parameters and endpoint access policy before retrying.`,
+            nextActions: ['Inspect the response body for parameter errors.', 'Avoid repeated equivalent retries.']
+        };
+    }
+    return null;
+}
+
+function inferLocalDocumentAdapter(raw = {}, requestedAdapter = {}) {
+    const requestedType = normalizeString(requestedAdapter.type || requestedAdapter.id);
+    if (requestedType === 'local_document_converter' || /^local_(docling|markitdown)_converter$/.test(requestedType)) {
+        return {
+            ...requestedAdapter,
+            id: normalizeString(requestedAdapter.id, requestedType),
+            type: 'local_document_converter',
+            runtime: normalizeString(requestedAdapter.runtime, 'python'),
+            packageName: normalizeString(requestedAdapter.packageName || requestedAdapter.package || requestedAdapter.dependency),
+            importName: normalizeString(requestedAdapter.importName || requestedAdapter.import || requestedAdapter.packageName || requestedAdapter.package),
+            importNames: normalizeArray(requestedAdapter.importNames || requestedAdapter.requiredImports || requestedAdapter.imports).map(String).filter(Boolean),
+            commandEnvVar: normalizeString(requestedAdapter.commandEnvVar || requestedAdapter.pythonEnvVar, 'AIGL_PYTHON')
+        };
+    }
+    const key = normalizeString(raw.toolId || raw.id || raw.name || raw.operationId).toLowerCase();
+    const adapter = LOCAL_DOCUMENT_ADAPTERS[key];
+    return adapter ? cloneJson(adapter) : null;
+}
+
+function localAdapterCommand(adapter = {}) {
+    const envVar = normalizeString(adapter.commandEnvVar, 'AIGL_PYTHON');
+    return normalizeString(envVar && process.env[envVar], normalizeString(adapter.command, 'python'));
+}
+
+function runProcessCapture(command, args = [], { timeoutMs = 30000, cwd = '', env = {}, maxOutputBytes = LOCAL_ADAPTER_OUTPUT_LIMIT } = {}) {
+    return new Promise((resolve) => {
+        const child = spawn(command, args, {
+            cwd: cwd || undefined,
+            env: {
+                ...process.env,
+                ...env
+            },
+            windowsHide: true
+        });
+        let stdout = '';
+        let stderr = '';
+        let killedForOutput = false;
+        const timer = setTimeout(() => {
+            child.kill();
+        }, Math.max(1000, Number(timeoutMs) || 30000));
+        child.stdout.on('data', (chunk) => {
+            stdout += chunk.toString('utf8');
+            if (Buffer.byteLength(stdout, 'utf8') > maxOutputBytes) {
+                killedForOutput = true;
+                child.kill();
+            }
+        });
+        child.stderr.on('data', (chunk) => {
+            stderr += chunk.toString('utf8');
+            if (Buffer.byteLength(stderr, 'utf8') > maxOutputBytes) {
+                killedForOutput = true;
+                child.kill();
+            }
+        });
+        child.on('error', (error) => {
+            clearTimeout(timer);
+            resolve({
+                status: 'spawn_error',
+                ok: false,
+                exitCode: null,
+                stdout,
+                stderr,
+                error: error?.message || String(error)
+            });
+        });
+        child.on('close', (code, signal) => {
+            clearTimeout(timer);
+            resolve({
+                status: killedForOutput ? 'output_limit_exceeded' : code === 0 ? 'completed' : 'process_failed',
+                ok: code === 0 && !killedForOutput,
+                exitCode: code,
+                signal,
+                stdout,
+                stderr
+            });
+        });
+    });
+}
+
+function pythonImportProbeSource() {
+    return [
+        'import importlib.util, sys',
+        'name = sys.argv[1]',
+        'sys.exit(0 if importlib.util.find_spec(name) else 2)'
+    ].join('\n');
+}
+
+function markitdownConvertSource() {
+    return [
+        'import json, os, sys, traceback',
+        'path = sys.argv[1]',
+        'try:',
+        '    from markitdown import MarkItDown',
+        '    converter = MarkItDown()',
+        '    result = converter.convert(path)',
+        '    text = getattr(result, "text_content", "") or str(result)',
+        '    payload = {"ok": True, "format": "markdown", "text": text, "tables": [], "metadata": {"converter": "markitdown", "source_path": os.path.abspath(path)}}',
+        '    print(json.dumps(payload, ensure_ascii=False))',
+        'except Exception as exc:',
+        '    print(json.dumps({"ok": False, "error": str(exc), "traceback": traceback.format_exc()}, ensure_ascii=False))',
+        '    sys.exit(1)'
+    ].join('\n');
+}
+
+function doclingConvertSource() {
+    return [
+        'import json, os, sys, traceback',
+        'path = sys.argv[1]',
+        'output_format = sys.argv[2] if len(sys.argv) > 2 else "markdown"',
+        'try:',
+        '    from docling.document_converter import DocumentConverter',
+        '    result = DocumentConverter().convert(path)',
+        '    doc = result.document',
+        '    text = ""',
+        '    data = None',
+        '    tables = []',
+        '    if output_format == "json":',
+        '        if hasattr(doc, "export_to_dict"):',
+        '            data = doc.export_to_dict()',
+        '        text = json.dumps(data if data is not None else {}, ensure_ascii=False)',
+        '    elif hasattr(doc, "export_to_markdown"):',
+        '        text = doc.export_to_markdown()',
+        '    elif hasattr(doc, "export_to_text"):',
+        '        text = doc.export_to_text()',
+        '    else:',
+        '        text = str(doc)',
+        '    if hasattr(doc, "tables"):',
+        '        tables = [str(table) for table in list(getattr(doc, "tables") or [])[:50]]',
+        '    payload = {"ok": True, "format": output_format, "text": text, "tables": tables, "metadata": {"converter": "docling", "source_path": os.path.abspath(path)}}',
+        '    if data is not None:',
+        '        payload["document"] = data',
+        '    print(json.dumps(payload, ensure_ascii=False))',
+        'except Exception as exc:',
+        '    print(json.dumps({"ok": False, "error": str(exc), "traceback": traceback.format_exc()}, ensure_ascii=False))',
+        '    sys.exit(1)'
+    ].join('\n');
+}
+
+function pythonDocumentExtractSource() {
+    return [
+        'import csv, json, os, sys, traceback',
+        'path = sys.argv[1]',
+        'ext = os.path.splitext(path)[1].lower()',
+        'try:',
+        '    text_parts = []',
+        '    tables = []',
+        '    if ext == ".docx":',
+        '        import docx',
+        '        document = docx.Document(path)',
+        '        for paragraph in document.paragraphs:',
+        '            value = paragraph.text.strip()',
+        '            if value:',
+        '                text_parts.append(value)',
+        '        for table_index, table in enumerate(document.tables):',
+        '            rows = []',
+        '            text_parts.append("")',
+        '            text_parts.append(f"Table {table_index + 1}")',
+        '            for row in table.rows:',
+        '                values = [cell.text.strip().replace("\\n", " ") for cell in row.cells]',
+        '                rows.append(values)',
+        '                text_parts.append(" | ".join(values))',
+        '            tables.append({"index": table_index, "rows": rows})',
+        '    elif ext == ".pdf":',
+        '        from pypdf import PdfReader',
+        '        reader = PdfReader(path)',
+        '        for index, page in enumerate(reader.pages):',
+        '            text_parts.append(f"Page {index + 1}")',
+        '            text_parts.append(page.extract_text() or "")',
+        '    elif ext in [".txt", ".md", ".csv", ".tsv", ".html", ".htm", ".json"]:',
+        '        with open(path, "r", encoding="utf-8", errors="replace") as handle:',
+        '            text_parts.append(handle.read())',
+        '        if ext in [".csv", ".tsv"]:',
+        '            delimiter = "\\t" if ext == ".tsv" else ","',
+        '            with open(path, "r", encoding="utf-8", errors="replace", newline="") as handle:',
+        '                tables.append({"index": 0, "rows": list(csv.reader(handle, delimiter=delimiter))})',
+        '    else:',
+        '        raise RuntimeError(f"unsupported format for python_document_extract: {ext}")',
+        '    payload = {"ok": True, "format": "markdown", "text": "\\n".join(text_parts), "tables": tables, "metadata": {"converter": "python_document_extract", "source_path": os.path.abspath(path), "extension": ext}}',
+        '    print(json.dumps(payload, ensure_ascii=False))',
+        'except Exception as exc:',
+        '    print(json.dumps({"ok": False, "error": str(exc), "traceback": traceback.format_exc()}, ensure_ascii=False))',
+        '    sys.exit(1)'
+    ].join('\n');
+}
+
 function pickServerUrl(raw = {}, args = {}) {
     const servers = normalizeArray(raw.servers || raw.server);
     const serverUrl = servers
@@ -615,6 +911,7 @@ class HumanClawToolAcquisitionGateway {
         this.registryUrl = normalizeString(options.registryUrl, OFFICIAL_MCP_REGISTRY_URL);
         this.fetchRegistry = typeof options.registryFetcher === 'function' ? options.registryFetcher : this.defaultFetchRegistry.bind(this);
         this.mcpManager = options.mcpManager || null;
+        this.localAdapterRunner = options.localAdapterRunner || null;
         this.emitGatewayEvent = typeof options.emitGatewayEvent === 'function' ? options.emitGatewayEvent : () => {};
     }
 
@@ -627,12 +924,29 @@ class HumanClawToolAcquisitionGateway {
             externalExposurePath: this.externalExposurePath,
             externalAuthProfilesPath: this.externalAuthProfilesPath,
             contractSourceCount: CONTRACT_SOURCE_PROFILES.length,
-            coreBundleCount: CORE_TOOL_BUNDLES.length
+            coreBundleCount: CORE_TOOL_BUNDLES.length,
+            standardToolPackCount: STANDARD_TOOL_PACKS.length
         };
     }
 
     listContractSources() {
         return CONTRACT_SOURCE_PROFILES.map((profile) => cloneJson(profile));
+    }
+
+    listStandardToolPacks(args = {}) {
+        return listStandardToolPacks({
+            includeTools: args.includeTools !== false
+        });
+    }
+
+    searchStandardToolPacks(args = {}) {
+        return searchStandardToolPacks(
+            args.query || args.q || args.taskText || args.task || '',
+            {
+                limit: args.limit || 12,
+                includeTools: args.includeTools !== false
+            }
+        );
     }
 
     listCoreTools() {
@@ -665,10 +979,36 @@ class HumanClawToolAcquisitionGateway {
         const limit = Math.max(1, Math.min(Number(args.limit || 12), 50));
         const includeCore = args.includeCore !== false;
         const includeRegistry = args.includeRegistry !== false;
+        const includeStandardPacks = args.includeStandardPacks !== false && args.includeStandardToolPacks !== false;
         const errors = [];
         let candidates = [];
         if (includeCore) {
             candidates.push(...this.searchCoreCandidates(query, limit));
+        }
+        if (includeStandardPacks) {
+            candidates.push(...this.searchStandardToolPacks({
+                query,
+                limit,
+                includeTools: args.includePackTools === true
+            }).map((pack) => ({
+                ...pack,
+                health: 'available_after_exposure',
+                searchText: pack.searchText || JSON.stringify(pack),
+                smokeProfile: {
+                    checks: [
+                        {
+                            id: `${pack.id}_contract_lint`,
+                            type: 'contract_lint',
+                            mutates: false
+                        },
+                        {
+                            id: `${pack.id}_exposure_dry_run`,
+                            type: 'standard_tool_pack_exposure',
+                            mutates: false
+                        }
+                    ]
+                }
+            })));
         }
         if (includeRegistry) {
             try {
@@ -704,6 +1044,7 @@ class HumanClawToolAcquisitionGateway {
             query,
             sourceCount: {
                 core: includeCore ? CORE_TOOL_BUNDLES.length : 0,
+                standardPacks: includeStandardPacks ? STANDARD_TOOL_PACKS.length : 0,
                 registry: ranked.filter((candidate) => candidate.source === 'official_mcp_registry').length
             },
             candidateCount: ranked.length,
@@ -1680,6 +2021,16 @@ class HumanClawToolAcquisitionGateway {
                 requestedAdapter.id === 'composio_rest_v3' ||
                 requestedAdapter.type === 'composio_rest_v3'
             );
+            const inferredLocalAdapter = inferLocalDocumentAdapter(raw, requestedAdapter);
+            const localAdapterEnabled = ['pydantic_tool', 'langchain_tool'].includes(sourceType) &&
+                inferredLocalAdapter &&
+                (
+                    args.enableLocalAdapters === true ||
+                    args.enableLocalDocumentAdapters === true ||
+                    args.enableExternalAdapters === true ||
+                    requestedAdapter.id ||
+                    requestedAdapter.type
+                );
             const openApiMeta = sourceType === 'openapi_operation'
                 ? {
                     method: normalizeString(raw.method, 'GET').toUpperCase(),
@@ -1716,11 +2067,17 @@ class HumanClawToolAcquisitionGateway {
                             ...requestedAdapter,
                             authProfileId
                         }
+                        : localAdapterEnabled
+                            ? {
+                                ...inferredLocalAdapter,
+                                authProfileId
+                            }
                         : null;
             const callable = args.trustCallable === true && (
                 raw.callable === true ||
                 openApiAdapterEnabled ||
-                composioAdapterEnabled
+                composioAdapterEnabled ||
+                localAdapterEnabled
             );
             const compiled = compileAndLintAiglContract(raw, {
                 sourceType: sourceType || raw.sourceType || raw.source_type,
@@ -1776,6 +2133,32 @@ class HumanClawToolAcquisitionGateway {
         }));
     }
 
+    standardPackPublicExternalExposures(args = {}) {
+        const operations = publicReadonlyOpenApiOperationsFromStandardPacks({
+            packIds: args.standardToolPacks || args.packIds || args.packs,
+            query: args.query || args.taskText || args.task
+        });
+        return this.compileRawExternalToolsForExposure(operations.map((entry) => ({
+            ...entry,
+            callable: true
+        })), {
+            sourceType: 'openapi_operation',
+            trustCallable: true,
+            enableOpenApiAdapter: true,
+            minScore: args.minScore || 60
+        }).map((entry) => ({
+            ...entry,
+            type: 'standard_pack_public_openapi_tool',
+            verified: true,
+            verification: 'standard_pack_public_readonly',
+            notes: [
+                ...normalizeArray(entry.notes),
+                'AIGL Standard Tool Pack public read-only OpenAPI adapter; no auth required.'
+            ],
+            virtualToolId: createExternalVirtualToolId(entry)
+        }));
+    }
+
     findExternalExposure(state = {}, args = {}) {
         const requested = normalizeString(
             args.exposureId || args.exposure_id || args.externalToolId || args.external_tool_id || args.toolId || args.tool || args.id || args.name
@@ -1784,7 +2167,11 @@ class HumanClawToolAcquisitionGateway {
             return null;
         }
         const lowered = requested.toLowerCase();
-        return [...(state.exposures || []), ...this.builtinPublicExternalExposures()].find((entry) => {
+        return [
+            ...(state.exposures || []),
+            ...this.builtinPublicExternalExposures(),
+            ...this.standardPackPublicExternalExposures(args)
+        ].find((entry) => {
             const values = [
                 entry.id,
                 entry.toolId,
@@ -1897,7 +2284,8 @@ class HumanClawToolAcquisitionGateway {
             const state = await this.loadExternalExposure();
             for (const exposure of [
                 ...(state.exposures || []),
-                ...(args.includeBuiltinPublic !== false ? this.builtinPublicExternalExposures() : [])
+                ...(args.includeBuiltinPublic !== false ? this.builtinPublicExternalExposures() : []),
+                ...(args.includeStandardPublic !== false ? this.standardPackPublicExternalExposures(args) : [])
             ]) {
                 entries.push(this.makeExternalExposureSearchEntry(exposure));
             }
@@ -1915,7 +2303,18 @@ class HumanClawToolAcquisitionGateway {
             }
         }
 
-        const scored = entries.map((entry) => {
+        const uniqueEntries = [...new Map(entries.map((entry, index) => {
+            const key = normalizeString(
+                entry.virtualToolId ||
+                    (entry.callable === true ? entry.call_pattern?.tool : '') ||
+                    entry.toolId ||
+                    entry.exposureId ||
+                    entry.id
+            ).toLowerCase();
+            return [key || `${entry.type || 'entry'}:${index}`, entry];
+        })).values()];
+
+        const scored = uniqueEntries.map((entry) => {
             const searchText = JSON.stringify({
                 id: entry.id,
                 toolId: entry.toolId,
@@ -1934,8 +2333,8 @@ class HumanClawToolAcquisitionGateway {
         const tools = scored
             .filter(({ score }) => score > 0)
             .sort((left, right) =>
-                (right.entry.callable === true ? 1 : 0) - (left.entry.callable === true ? 1 : 0) ||
                 right.score - left.score ||
+                (right.entry.callable === true ? 1 : 0) - (left.entry.callable === true ? 1 : 0) ||
                 String(left.entry.id).localeCompare(String(right.entry.id))
             )
             .slice(0, limit)
@@ -1947,7 +2346,7 @@ class HumanClawToolAcquisitionGateway {
         return {
             status: 'completed',
             query,
-            total: entries.length,
+            total: uniqueEntries.length,
             returned: tools.length,
             tools
         };
@@ -2014,6 +2413,205 @@ class HumanClawToolAcquisitionGateway {
             }
         }
         return { url: url.toString() };
+    }
+
+    async checkLocalAdapterReadiness(adapter = {}, args = {}) {
+        if (this.localAdapterRunner?.check) {
+            return await this.localAdapterRunner.check(adapter, args);
+        }
+        if (normalizeString(adapter.type) !== 'local_document_converter') {
+            return {
+                status: 'adapter_unsupported',
+                ok: false,
+                adapter,
+                message: 'Only local_document_converter adapters are supported by the local adapter runner.'
+            };
+        }
+        const importNames = normalizeArray(adapter.importNames || adapter.requiredImports || adapter.importName || adapter.packageName)
+            .map((entry) => normalizeString(entry))
+            .filter(Boolean);
+        if (!importNames.length) {
+            return {
+                status: 'adapter_invalid',
+                ok: false,
+                adapter,
+                message: 'Local document adapter is missing importName/packageName.'
+            };
+        }
+        const command = localAdapterCommand(adapter);
+        const missingImports = [];
+        for (const importName of importNames) {
+            const result = await runProcessCapture(command, ['-c', pythonImportProbeSource(), importName], {
+                timeoutMs: args.timeoutMs || 15000,
+                cwd: this.projectRoot,
+                maxOutputBytes: 256000
+            });
+            if (result.status === 'spawn_error') {
+                return {
+                    status: 'missing_runtime',
+                    ok: false,
+                    adapter,
+                    command,
+                    message: `Python runtime is unavailable for local adapter: ${result.error}`,
+                    nextActions: ['Set AIGL_PYTHON to a Python executable with the required package installed.']
+                };
+            }
+            if (!result.ok) {
+                missingImports.push(importName);
+            }
+        }
+        if (!missingImports.length) {
+            return {
+                status: 'completed',
+                ok: true,
+                adapter,
+                command,
+                packageName: normalizeString(adapter.packageName || importNames.join(',')),
+                importName: importNames[0],
+                importNames
+            };
+        }
+        return {
+            status: 'missing_dependency',
+            ok: false,
+            adapter,
+            command,
+            packageName: normalizeString(adapter.packageName || missingImports.join(',')),
+            importName: missingImports[0],
+            importNames,
+            missingImports,
+            message: `Python package is not importable: ${missingImports.join(', ')}`,
+            nextActions: [`Install ${adapter.packageName || missingImports.join(', ')} in the AIGL Python environment.`, 'Use the alternate document converter if available.']
+        };
+    }
+
+    async writeLocalAdapterArtifact(exposure = {}, payload = {}, text = '') {
+        const artifactDir = path.join(this.stateDir, 'local-adapter-artifacts');
+        await fsp.mkdir(artifactDir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const safeTool = safeSegment(exposure.toolId || exposure.id || 'local_adapter');
+        const extension = normalizeString(payload.format).toLowerCase() === 'json' ? 'json' : 'md';
+        const artifactPath = path.join(artifactDir, `${safeTool}-${stamp}.${extension}`);
+        const body = extension === 'json' && payload.document
+            ? JSON.stringify(payload.document, null, 2)
+            : String(text || payload.text || '');
+        await fsp.writeFile(artifactPath, body, 'utf8');
+        return artifactPath;
+    }
+
+    parseLocalAdapterPayload(result = {}) {
+        const raw = normalizeString(result.stdout);
+        if (!raw) {
+            return {
+                ok: false,
+                error: normalizeString(result.stderr, 'Local adapter returned no stdout.')
+            };
+        }
+        try {
+            return JSON.parse(raw);
+        } catch {
+            return {
+                ok: result.ok === true,
+                text: raw,
+                stderr: result.stderr
+            };
+        }
+    }
+
+    async executeLocalAdapterExposure(exposure = {}, params = {}, args = {}) {
+        const adapter = exposure.adapter || {};
+        if (normalizeString(adapter.type) !== 'local_document_converter') {
+            return {
+                status: 'adapter_required',
+                ok: false,
+                exposureId: exposure.id,
+                toolId: exposure.toolId,
+                message: 'This local contract needs a local_document_converter adapter before execution.'
+            };
+        }
+        const filePath = path.resolve(normalizeString(params.path || params.file || params.filePath));
+        if (!filePath || !normalizeString(params.path || params.file || params.filePath)) {
+            return {
+                status: 'invalid_args',
+                ok: false,
+                exposureId: exposure.id,
+                toolId: exposure.toolId,
+                message: 'Local document adapter requires args.path pointing to an existing local file.'
+            };
+        }
+        const stat = await fsp.stat(filePath).catch(() => null);
+        if (!stat?.isFile()) {
+            return {
+                status: 'file_not_found',
+                ok: false,
+                exposureId: exposure.id,
+                toolId: exposure.toolId,
+                path: filePath,
+                message: 'Local document path does not exist or is not a file.'
+            };
+        }
+        const readiness = await this.checkLocalAdapterReadiness(adapter, args);
+        if (!readiness.ok) {
+            return {
+                ...readiness,
+                exposureId: exposure.id,
+                toolId: exposure.toolId,
+                path: filePath
+            };
+        }
+        if (this.localAdapterRunner?.execute) {
+            return await this.localAdapterRunner.execute(exposure, params, args);
+        }
+        const outputFormat = normalizeString(params.output_format || params.format || adapter.outputFormat, 'markdown');
+        const command = localAdapterCommand(adapter);
+        const adapterId = normalizeString(adapter.id);
+        const source = adapterId === 'local_docling_converter'
+            ? doclingConvertSource()
+            : adapterId === 'local_python_document_extractor'
+                ? pythonDocumentExtractSource()
+                : markitdownConvertSource();
+        const childArgs = adapterId === 'local_docling_converter'
+            ? ['-c', source, filePath, outputFormat]
+            : ['-c', source, filePath];
+        const result = await runProcessCapture(command, childArgs, {
+            timeoutMs: args.timeoutMs || params.timeoutMs || 120000,
+            cwd: this.projectRoot,
+            maxOutputBytes: LOCAL_ADAPTER_OUTPUT_LIMIT
+        });
+        const payload = this.parseLocalAdapterPayload(result);
+        if (!result.ok || payload.ok === false) {
+            return {
+                status: result.status === 'output_limit_exceeded' ? 'output_limit_exceeded' : 'adapter_execution_failed',
+                ok: false,
+                exposureId: exposure.id,
+                toolId: exposure.toolId,
+                path: filePath,
+                adapter,
+                command,
+                exitCode: result.exitCode,
+                error: payload.error || normalizeString(result.stderr, 'Local adapter execution failed.'),
+                stderr: normalizeString(result.stderr).slice(0, 4000),
+                nextActions: ['Try the alternate document converter.', 'If output is too large, request a page range or table-only extraction.']
+            };
+        }
+        const text = normalizeString(payload.text);
+        const maxChars = Math.max(1000, Math.min(Number(params.max_chars || params.maxChars || 50000), 500000));
+        const artifactPath = args.writeArtifact === false ? '' : await this.writeLocalAdapterArtifact(exposure, payload, text);
+        return {
+            status: 'completed',
+            ok: true,
+            exposureId: exposure.id,
+            toolId: exposure.toolId,
+            path: filePath,
+            adapter,
+            format: payload.format || outputFormat,
+            text: text.slice(0, maxChars),
+            truncated: text.length > maxChars,
+            fullTextPath: artifactPath,
+            tables: normalizeArray(payload.tables),
+            metadata: payload.metadata || {},
+            document: payload.document && outputFormat === 'json' ? payload.document : undefined
+        };
     }
 
     async executeOpenApiExposure(exposure = {}, params = {}, args = {}, context = {}) {
@@ -2100,6 +2698,8 @@ class HumanClawToolAcquisitionGateway {
         try {
             const response = await fetch(built.url, fetchOptions);
             const contentType = response.headers.get('content-type') || '';
+            const responseHeaders = extractResponseHeaders(response.headers);
+            const failure = response.ok ? null : classifyHttpFailure(response.status, exposure, responseHeaders);
             const text = await response.text();
             let body = text;
             if (/json/i.test(contentType)) {
@@ -2123,8 +2723,13 @@ class HumanClawToolAcquisitionGateway {
                 http: {
                     status: response.status,
                     statusText: response.statusText,
-                    contentType
+                    contentType,
+                    headers: responseHeaders
                 },
+                failure,
+                failureReason: failure?.reason,
+                message: failure?.message,
+                nextActions: failure?.nextActions,
                 body
             };
         } catch (error) {
@@ -2239,6 +2844,8 @@ class HumanClawToolAcquisitionGateway {
                 signal: controller.signal
             });
             const contentType = response.headers.get('content-type') || '';
+            const responseHeaders = extractResponseHeaders(response.headers);
+            const failure = response.ok ? null : classifyHttpFailure(response.status, exposure, responseHeaders);
             const text = await response.text();
             let parsed = text;
             if (/json/i.test(contentType)) {
@@ -2264,8 +2871,13 @@ class HumanClawToolAcquisitionGateway {
                 http: {
                     status: response.status,
                     statusText: response.statusText,
-                    contentType
+                    contentType,
+                    headers: responseHeaders
                 },
+                failure,
+                failureReason: failure?.reason,
+                message: failure?.message,
+                nextActions: failure?.nextActions,
                 body: parsed
             };
         } catch (error) {
@@ -2351,6 +2963,9 @@ class HumanClawToolAcquisitionGateway {
         if (exposure.source?.type === 'composio_tool') {
             return await this.executeComposioExposure(exposure, params, args, context);
         }
+        if (exposure.source?.type === 'pydantic_tool' || exposure.adapter?.type === 'local_document_converter') {
+            return await this.executeLocalAdapterExposure(exposure, params, args, context);
+        }
         return {
             status: 'executor_missing',
             ok: false,
@@ -2379,17 +2994,7 @@ class HumanClawToolAcquisitionGateway {
         }, context);
     }
 
-    async smokeExposedExternalTool(args = {}, context = {}) {
-        const state = await this.loadExternalExposure();
-        const exposure = this.findExternalExposure(state, args);
-        if (!exposure) {
-            return {
-                status: 'not_found',
-                ok: false,
-                requested: normalizeString(args.exposureId || args.toolId || args.tool || args.id || args.name),
-                message: 'No exposed external tool matched this id/name/toolId.'
-            };
-        }
+    async smokeExternalExposureObject(exposure = {}, args = {}, context = {}) {
         const checks = [];
         const addCheck = (id, ok, details = {}) => {
             checks.push({
@@ -2411,7 +3016,8 @@ class HumanClawToolAcquisitionGateway {
             callable: exposure.callable,
             verification: exposure.verification
         });
-        const adapterRequired = ['openapi_operation', 'composio_tool'].includes(exposure.source?.type);
+        const adapterRequired = ['openapi_operation', 'composio_tool'].includes(exposure.source?.type) ||
+            exposure.adapter?.type === 'local_document_converter';
         addCheck('adapter_configured', !adapterRequired || Boolean(exposure.adapter?.id || exposure.adapter?.type), {
             adapter: exposure.adapter || null
         });
@@ -2424,12 +3030,24 @@ class HumanClawToolAcquisitionGateway {
         } else if (auth.profile) {
             const authStatus = this.authProfileStatus(auth.profile);
             addCheck('auth_profile', authStatus.status === 'ready', {
+                status: authStatus.status,
                 profile: this.publicAuthProfile(auth.profile)
             });
         } else {
             addCheck('auth_profile', true, {
                 profile: null,
                 note: 'No auth profile required or provided.'
+            });
+        }
+        if (exposure.adapter?.type === 'local_document_converter') {
+            const readiness = await this.checkLocalAdapterReadiness(exposure.adapter, args);
+            addCheck('local_adapter_dependency', readiness.ok === true, {
+                status: readiness.status,
+                packageName: readiness.packageName,
+                importName: readiness.importName,
+                command: readiness.command,
+                message: readiness.message,
+                nextActions: readiness.nextActions
             });
         }
         const ok = checks.every((check) => check.ok);
@@ -2468,12 +3086,307 @@ class HumanClawToolAcquisitionGateway {
         };
     }
 
+    async smokeExposedExternalTool(args = {}, context = {}) {
+        const state = await this.loadExternalExposure();
+        const exposure = this.findExternalExposure(state, args);
+        if (!exposure) {
+            return {
+                status: 'not_found',
+                ok: false,
+                requested: normalizeString(args.exposureId || args.toolId || args.tool || args.id || args.name),
+                message: 'No exposed external tool matched this id/name/toolId.'
+            };
+        }
+        return await this.smokeExternalExposureObject(exposure, args, context);
+    }
+
+    compileStandardToolPackExposureEntries(args = {}) {
+        const collected = collectStandardToolPackContracts({
+            packIds: args.standardToolPacks || args.packIds || args.packs,
+            query: args.query || args.taskText || args.task,
+            limit: args.limit || args.maxTools || 100,
+            includePublicReadonly: args.includePublicReadonly !== false,
+            includeAuthRequired: args.includeAuthRequired !== false,
+            includeLocalContracts: args.includeLocalContracts !== false
+        });
+        const publicOpenApi = collected.groups.openapiOperations.filter((tool) => normalizeString(tool.exposure) === 'public_readonly');
+        const authOpenApi = collected.groups.openapiOperations.filter((tool) => normalizeString(tool.exposure) !== 'public_readonly');
+        const authAdaptersEnabled = args.enableAuthRequiredAdapters === true || args.enableAuthenticatedAdapters === true;
+        const localAdaptersEnabled = args.enableLocalAdapters === true || args.enableLocalDocumentAdapters === true;
+        const authProfiles = collectStandardToolPackAuthProfiles({
+            packIds: args.standardToolPacks || args.packIds || args.packs,
+            query: args.query || args.taskText || args.task,
+            limit: args.limit || args.maxTools || 100
+        });
+        const exposures = [
+            ...this.compileRawExternalToolsForExposure(publicOpenApi.map((entry) => ({ ...entry, callable: true })), {
+                ...args,
+                sourceType: 'openapi_operation',
+                trustCallable: true,
+                enableOpenApiAdapter: true,
+                minScore: args.minScore || 60
+            }),
+            ...this.compileRawExternalToolsForExposure(authOpenApi, {
+                ...args,
+                sourceType: 'openapi_operation',
+                trustCallable: authAdaptersEnabled,
+                enableOpenApiAdapter: authAdaptersEnabled,
+                minScore: args.minScore || 60
+            }),
+            ...this.compileRawExternalToolsForExposure(collected.groups.composioTools, {
+                ...args,
+                sourceType: 'composio_tool',
+                trustCallable: authAdaptersEnabled,
+                enableComposioAdapter: authAdaptersEnabled,
+                minScore: args.minScore || 60
+            }),
+            ...this.compileRawExternalToolsForExposure(collected.groups.mcpTools, {
+                ...args,
+                sourceType: 'mcp_tool',
+                trustCallable: false,
+                minScore: args.minScore || 60
+            }),
+            ...this.compileRawExternalToolsForExposure(collected.groups.contracts, {
+                ...args,
+                sourceType: normalizeString(args.sourceType || args.source_type || 'pydantic_tool'),
+                trustCallable: localAdaptersEnabled,
+                enableLocalAdapters: localAdaptersEnabled,
+                minScore: args.minScore || 60
+            })
+        ].map((entry) => ({
+            ...entry,
+            standardToolPack: true,
+            type: entry.callable ? 'standard_pack_callable_tool' : 'standard_pack_contract_tool',
+            verification: entry.callable ? entry.verification : normalizeString(entry.verification, 'adapter_required'),
+            notes: [
+                ...normalizeArray(entry.notes),
+                'Imported from AIGL Standard Tool Packs; use smoke_exposed_external_tool before relying on live authenticated backends.'
+            ]
+        }));
+        return {
+            status: 'completed',
+            selectedPacks: collected.selectedPacks,
+            counts: collected.counts,
+            authProfiles,
+            exposures
+        };
+    }
+
+    defaultSmokeArgsForExposure(exposure = {}, args = {}) {
+        const toolId = normalizeString(exposure.toolId || exposure.contract?.id);
+        const maps = [
+            args.smokeArgsByToolId,
+            args.smokeArgs,
+            args.parametersByToolId
+        ].filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry));
+        for (const map of maps) {
+            if (map[toolId] && typeof map[toolId] === 'object' && !Array.isArray(map[toolId])) {
+                return map[toolId];
+            }
+        }
+        const defaults = {
+            gmail_list_messages: { userId: 'me', maxResults: 1 },
+            msgraph_list_messages: { '$top': 1, '$select': 'subject,from,receivedDateTime,isRead', '$orderby': 'receivedDateTime desc' },
+            composio_gmail_search_emails: { query: 'newer_than:1d', max_results: 1 },
+            firecrawl_scrape: { url: 'https://example.com', formats: ['markdown'], onlyMainContent: true },
+            tavily_search: { query: 'OpenAI Codex', search_depth: 'basic', include_answer: false, include_raw_content: false, max_results: 1 },
+            openalex_search_works: { search: 'Toolformer language models can teach themselves to use tools', 'per-page': 1 },
+            crossref_search_works: { 'query.bibliographic': 'Toolformer language models can teach themselves to use tools', rows: 1 },
+            semantic_scholar_search_contract: { query: 'Toolformer language models can teach themselves to use tools', fields: 'title,authors,year,venue,externalIds', limit: 1 }
+        };
+        if (defaults[toolId]) {
+            return defaults[toolId];
+        }
+        return normalizeArray(exposure.contract?.examples)[0] ||
+            normalizeArray(exposure.contract?.generatedExamples)[0] ||
+            {};
+    }
+
+    shouldRunLiveSmokeForExposure(exposure = {}, args = {}) {
+        if (args.liveSmoke !== true && args.executeSmoke !== true && args.live !== true) {
+            return false;
+        }
+        if (args.liveSmokeAll === true) {
+            return true;
+        }
+        const allow = new Set(normalizeArray(args.liveSmokeTools || args.liveTools || args.tools).map((entry) => normalizeString(entry).toLowerCase()).filter(Boolean));
+        if (!allow.size) {
+            return false;
+        }
+        const values = [
+            exposure.toolId,
+            exposure.id,
+            exposure.virtualToolId,
+            exposure.contract?.id
+        ].map((entry) => normalizeString(entry).toLowerCase()).filter(Boolean);
+        return values.some((value) => allow.has(value));
+    }
+
+    downgradeExposureAfterSmokeFailure(exposure = {}, smoke = {}) {
+        const failed = normalizeArray(smoke.checks).find((check) => check.ok === false) || {};
+        const reason = normalizeString(failed.status || failed.id || smoke.status, 'smoke_failed');
+        return {
+            ...exposure,
+            callable: false,
+            verified: false,
+            virtualToolId: '',
+            verification: reason,
+            callableReason: `Standard pack adapter was not promoted because smoke failed: ${reason}.`,
+            notes: [
+                ...normalizeArray(exposure.notes),
+                `Smoke failed (${reason}); keep visible as a contract-only candidate until repaired.`
+            ].slice(-12),
+            smoke: {
+                status: smoke.status,
+                ok: false,
+                mode: smoke.mode,
+                failedCheck: failed.id || '',
+                reason,
+                checks: smoke.checks
+            }
+        };
+    }
+
+    promoteExposureAfterSmokePass(exposure = {}, smoke = {}) {
+        const next = {
+            ...exposure,
+            callable: true,
+            verified: true,
+            verification: smoke.mode === 'live' ? 'live_smoke_passed' : 'static_smoke_passed',
+            callableReason: smoke.mode === 'live'
+                ? 'Runtime adapter passed live smoke and can be called directly.'
+                : 'Runtime adapter passed static auth/dependency smoke and can be called directly.',
+            smoke: {
+                status: smoke.status,
+                ok: true,
+                mode: smoke.mode,
+                checks: smoke.checks
+            }
+        };
+        next.virtualToolId = createExternalVirtualToolId(next);
+        return next;
+    }
+
+    async verifyStandardExposureEntries(exposures = [], args = {}, context = {}) {
+        const smokeResults = [];
+        const verified = [];
+        for (const exposure of exposures) {
+            const shouldSmoke = exposure.standardToolPack === true &&
+                (
+                    exposure.callable === true ||
+                    exposure.adapter?.id ||
+                    exposure.adapter?.type
+                );
+            if (!shouldSmoke) {
+                verified.push(exposure);
+                continue;
+            }
+            const live = this.shouldRunLiveSmokeForExposure(exposure, args);
+            const smoke = await this.smokeExternalExposureObject(exposure, {
+                ...args,
+                live,
+                execute: live,
+                approved: args.approved === true || live,
+                args: args.args || args.parameters || this.defaultSmokeArgsForExposure(exposure, args)
+            }, context);
+            const failed = normalizeArray(smoke.checks).find((check) => check.ok === false) || {};
+            smokeResults.push({
+                toolId: exposure.toolId,
+                status: smoke.status,
+                ok: smoke.ok,
+                mode: smoke.mode,
+                verification: smoke.ok ? (smoke.mode === 'live' ? 'live_smoke_passed' : 'static_smoke_passed') : 'smoke_failed',
+                reason: smoke.ok ? '' : normalizeString(failed.status || failed.id || smoke.status, 'smoke_failed')
+            });
+            verified.push(smoke.ok
+                ? this.promoteExposureAfterSmokePass(exposure, smoke)
+                : this.downgradeExposureAfterSmokeFailure(exposure, smoke));
+        }
+        return {
+            exposures: verified,
+            smokeResults
+        };
+    }
+
+    async exposeStandardToolPacks(args = {}) {
+        const compiled = this.compileStandardToolPackExposureEntries(args);
+        const includeRejected = args.includeRejected === true;
+        const maxExposure = Math.max(1, Math.min(Number(args.limit || args.maxTools || 100), 1000));
+        let filtered = compiled.exposures
+            .filter((entry) => includeRejected || entry.lint?.approved !== false)
+            .slice(0, maxExposure);
+        let configuredAuthProfiles = [];
+        if (args.configureAuthProfiles !== false && args.dryRun !== true) {
+            for (const profile of compiled.authProfiles || []) {
+                const configured = await this.configureExternalAuthProfile(profile);
+                configuredAuthProfiles.push(configured.profile || configured);
+            }
+        }
+        let smokeResults = [];
+        if (args.verifyAdapters === true || args.verifyLiveAdapters === true || args.smokeAdapters === true) {
+            const verified = await this.verifyStandardExposureEntries(filtered, args);
+            filtered = verified.exposures;
+            smokeResults = verified.smokeResults;
+        }
+        if (args.dryRun === true) {
+            return {
+                status: 'completed',
+                dryRun: true,
+                selectedPacks: compiled.selectedPacks,
+                counts: compiled.counts,
+                authProfiles: compiled.authProfiles || [],
+                configuredAuthProfiles,
+                smokeResults,
+                added: filtered.length,
+                callable: filtered.filter((entry) => entry.callable).length,
+                nonCallable: filtered.filter((entry) => !entry.callable).length,
+                rejectedSkipped: compiled.exposures.length - filtered.length,
+                exposures: filtered
+            };
+        }
+        const state = await this.loadExternalExposure();
+        const byId = new Map((state.exposures || []).map((entry) => [entry.id, entry]));
+        for (const entry of filtered) {
+            byId.set(entry.id, entry);
+        }
+        state.exposures = [...byId.values()]
+            .sort((a, b) =>
+                Number(b.callable) - Number(a.callable) ||
+                Number(b.score || 0) - Number(a.score || 0) ||
+                String(a.id).localeCompare(String(b.id))
+            );
+        const saved = await this.saveExternalExposure(state);
+        this.emitGatewayEvent('tool_acquisition.standard_tool_packs.exposed', {
+            added: filtered.length,
+            callable: filtered.filter((entry) => entry.callable).length,
+            total: saved.exposures.length
+        });
+        return {
+            status: 'completed',
+            externalExposurePath: this.externalExposurePath,
+            selectedPacks: compiled.selectedPacks,
+            counts: compiled.counts,
+            authProfiles: compiled.authProfiles || [],
+            configuredAuthProfiles,
+            smokeResults,
+            added: filtered.length,
+            total: saved.exposures.length,
+            callable: filtered.filter((entry) => entry.callable).length,
+            nonCallable: filtered.filter((entry) => !entry.callable).length,
+            rejectedSkipped: compiled.exposures.length - filtered.length,
+            exposures: filtered
+        };
+    }
+
     async bulkExposeExternalTools(args = {}) {
         const includeInstalledMcp = args.includeInstalledMcp !== false && args.includeInstalledMCP !== false;
         const includeMcpRegistry = args.includeMcpRegistry !== false && args.includeMCPRegistry !== false;
         const includeRejected = args.includeRejected === true;
         const maxExposure = Math.max(1, Math.min(Number(args.limit || args.maxTools || 100), 1000));
         const exposures = [];
+        if (args.includeStandardToolPacks === true || args.includeStandardPacks === true || args.standardToolPacks || args.packIds || args.packs) {
+            exposures.push(...this.compileStandardToolPackExposureEntries(args).exposures);
+        }
         if (includeInstalledMcp) {
             exposures.push(...await this.exposeInstalledMcpToolSpecs(args));
         }
@@ -2710,6 +3623,7 @@ module.exports = {
     OFFICIAL_MCP_REGISTRY_URL,
     CORE_TOOL_BUNDLES,
     BUILTIN_PUBLIC_OPENAPI_OPERATIONS,
+    STANDARD_TOOL_PACKS,
     buildMcpSmokeProfile,
     buildRegistryCandidate,
     createExternalVirtualToolId,

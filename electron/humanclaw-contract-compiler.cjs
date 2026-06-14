@@ -478,7 +478,8 @@ function compileAiglContract(raw = {}, options = {}) {
             : {},
         permissions: normalizeArray(raw.permissions || raw.permissionScopes || raw.scopes).map(String),
         risk: normalizeString(options.risk || raw.risk, 'medium'),
-        mutates: raw.mutates === true || raw.readOnlyHint === false || /post|put|patch|delete/i.test(raw.method || ''),
+        readOnlyHint: raw.readOnlyHint === true,
+        mutates: raw.mutates === true || raw.readOnlyHint === false || (raw.readOnlyHint !== true && /post|put|patch|delete/i.test(raw.method || '')),
         approval: normalizeString(options.approval || raw.approval, 'policy'),
         provenance: {
             importedAt: new Date().toISOString(),

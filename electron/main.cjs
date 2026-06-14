@@ -203,6 +203,7 @@ let desktopASRManager = null;
 let assistantGateway = null;
 let openclawRuntimeSupervisor = null;
 let humanClawGateway = null;
+let humanClawGatewayStartPromise = null;
 let petDialogueCollapsedBounds = null;
 let petDialogueExpanded = false;
 let petDialogueExtraTop = 0;
@@ -1681,6 +1682,35 @@ function ensureHumanClawGateway() {
     return humanClawGateway;
 }
 
+async function ensureHumanClawGatewayStarted(reason = 'manual') {
+    const gateway = ensureHumanClawGateway();
+    if (gateway.getStatus().running) {
+        return gateway.getStatus();
+    }
+    if (!humanClawGatewayStartPromise) {
+        humanClawGatewayStartPromise = gateway.start()
+            .catch((error) => {
+                console.warn(`[humanclaw-gateway] ${reason} 启动失败：`, error.message || error);
+                throw error;
+            })
+            .finally(() => {
+                humanClawGatewayStartPromise = null;
+            });
+    }
+    return humanClawGatewayStartPromise;
+}
+
+async function getHumanClawGatewayStatusEnsuringStarted(reason = 'status') {
+    try {
+        return await ensureHumanClawGatewayStarted(reason);
+    } catch (error) {
+        return {
+            ...ensureHumanClawGateway().getStatus(),
+            startError: error?.message || String(error)
+        };
+    }
+}
+
 function ensureOpenClawRuntimeSupervisor() {
     if (openclawRuntimeSupervisor) {
         return openclawRuntimeSupervisor;
@@ -2607,12 +2637,13 @@ function applyPreferencesPatch(partialPreferences = {}) {
     if (humanClawStateDirChanged && humanClawGateway) {
         const oldGateway = humanClawGateway;
         humanClawGateway = null;
+        humanClawGatewayStartPromise = null;
         void oldGateway.stop()
             .catch((error) => {
                 console.warn('[humanclaw-gateway] 状态目录切换时关闭旧 Gateway 失败：', error.message || error);
             })
             .finally(() => {
-                void ensureHumanClawGateway().start().catch((error) => {
+                void ensureHumanClawGatewayStarted('state_dir_changed').catch((error) => {
                     console.warn('[humanclaw-gateway] 状态目录切换后启动失败：', error.message || error);
                 });
             });
@@ -3265,17 +3296,24 @@ function registerIpc() {
         await syncOpenClawSelection({ ensureReady: true });
         return ensureAssistantGateway().patchSession(payload || {});
     });
-    ipcMain.handle('aigril:gateway-status', async () => ensureHumanClawGateway().getStatus());
-    ipcMain.handle('aigril:gateway-tools-list', async () => ensureHumanClawGateway().listTools());
-    ipcMain.handle('aigril:gateway-tools-call', async (_event, payload = {}) =>
-        ensureHumanClawGateway().callTool(payload || {})
+    ipcMain.handle('aigril:gateway-status', async () =>
+        getHumanClawGatewayStatusEnsuringStarted('status_request')
     );
-    ipcMain.handle('aigril:gateway-agent-run', async (_event, payload = {}) =>
-        ensureHumanClawGateway().runAgent({
+    ipcMain.handle('aigril:gateway-tools-list', async () => {
+        await ensureHumanClawGatewayStarted('tools_list');
+        return ensureHumanClawGateway().listTools();
+    });
+    ipcMain.handle('aigril:gateway-tools-call', async (_event, payload = {}) => {
+        await ensureHumanClawGatewayStarted('tool_call');
+        return ensureHumanClawGateway().callTool(payload || {});
+    });
+    ipcMain.handle('aigril:gateway-agent-run', async (_event, payload = {}) => {
+        await ensureHumanClawGatewayStarted('agent_run');
+        return ensureHumanClawGateway().runAgent({
             ...(payload || {}),
             llmSettings: payload?.llmSettings || getResolvedLlmSettings()
-        })
-    );
+        });
+    });
     ipcMain.handle('aigril:gateway-agent-interrupt', async (_event, payload = {}) =>
         ensureHumanClawGateway().interruptAgentRun(payload || {})
     );
@@ -3532,7 +3570,7 @@ app.whenReady().then(() => {
     protocol.handle(LOCAL_RESOURCE_PROTOCOL, handleLocalResourceProtocol);
     protocol.handle(SPEECH_MODEL_PROTOCOL, handleSpeechModelProtocol);
     registerIpc();
-    void ensureHumanClawGateway().start().catch((error) => {
+    void ensureHumanClawGatewayStarted('app_ready').catch((error) => {
         console.warn('[humanclaw-gateway] 启动失败：', error.message || error);
     });
     createPetWindow();
