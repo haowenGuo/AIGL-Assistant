@@ -5,6 +5,11 @@
 </p>
 
 <p align="center">
+  <a href="https://haowenGuo.github.io/AIGril/about-aigl.html"><img alt="AIGRIL Showcase" src="https://img.shields.io/badge/AIGRIL-Showcase%20%26%20Downloads-73b8e5?style=for-the-badge"></a>
+  <a href="https://github.com/haowenGuo/AIGL-Assistant/releases/tag/v1.0.4"><img alt="HumanClaw Release" src="https://img.shields.io/badge/HumanClaw-v1.0.4-2563eb?style=for-the-badge"></a>
+</p>
+
+<p align="center">
   <a href="README.md">English</a> ·
   <a href="README.zh-CN.md">简体中文</a> ·
   <a href="README.ja.md">日本語</a>
@@ -22,6 +27,13 @@ The product target is deliberately two-layered:
 - The bottom layer should be stable like a local agent harness, with tools, approvals, audit logs, memory, recovery, and tests.
 
 In short: AIGL Assistant is trying to make task execution feel less like operating a developer console and more like working with a capable character.
+
+## Public Showcase
+
+- Project showcase and downloads: [https://haowenGuo.github.io/AIGril/about-aigl.html](https://haowenGuo.github.io/AIGril/about-aigl.html)
+- Windows current mainline: [HumanClaw Setup 1.0.4](https://github.com/haowenGuo/AIGL-Assistant/releases/download/v1.0.4/HumanClaw-Setup-1.0.4-win-x64.exe) or [HumanClaw Portable 1.0.4](https://github.com/haowenGuo/AIGL-Assistant/releases/download/v1.0.4/HumanClaw-Portable-1.0.4-win-x64.exe).
+- Linux compatible packages: [AppImage](https://github.com/haowenGuo/AIGril/releases/download/v1.0.3/AIGril-1.0.3-linux-x86_64.AppImage), [Debian .deb](https://github.com/haowenGuo/AIGril/releases/download/v1.0.3/AIGril-1.0.3-linux-amd64.deb), or [tar.gz](https://github.com/haowenGuo/AIGril/releases/download/v1.0.3/AIGril-1.0.3-linux-x64.tar.gz).
+- Note: HumanClaw `v1.0.4` currently publishes Windows assets; the Linux packages are from the earlier AIGril `v1.0.3` release.
 
 ## Core Systems
 
