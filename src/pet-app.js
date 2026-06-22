@@ -23,7 +23,7 @@ function applyPetWindowFrameCameraCompensation() {
 }
 
 function emitDesktopChatEvent(payload) {
-    window.aigrilDesktop?.emitChatEvent?.(payload);
+    window.ailisDesktop?.emitChatEvent?.(payload);
 }
 
 function installPetInteractions(rootElement) {
@@ -45,7 +45,7 @@ function installPetInteractions(rootElement) {
             moved: false
         };
 
-        window.aigrilDesktop?.beginDragPetWindow?.();
+        window.ailisDesktop?.beginDragPetWindow?.();
         rootElement.setPointerCapture?.(event.pointerId);
     });
 
@@ -62,7 +62,7 @@ function installPetInteractions(rootElement) {
         }
 
         if (dragState.moved) {
-            window.aigrilDesktop?.dragPetWindow?.();
+            window.ailisDesktop?.dragPetWindow?.();
         }
     });
 
@@ -73,28 +73,29 @@ function installPetInteractions(rootElement) {
 
         const wasClick = !dragState.moved;
         resetDragState();
-        window.aigrilDesktop?.endDragPetWindow?.();
+        window.ailisDesktop?.endDragPetWindow?.();
 
         if (wasClick) {
-            await window.aigrilDesktop?.showChatWindow?.();
+            await window.ailisDesktop?.showChatWindow?.();
         }
     });
 
     rootElement.addEventListener('pointercancel', () => {
         resetDragState();
-        window.aigrilDesktop?.endDragPetWindow?.();
+        window.ailisDesktop?.endDragPetWindow?.();
     });
     rootElement.addEventListener('contextmenu', async (event) => {
         event.preventDefault();
         resetDragState();
-        await window.aigrilDesktop?.showControlMenu?.();
+        await window.ailisDesktop?.showControlMenu?.();
     });
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
     const petShellEl = document.getElementById('pet-shell');
     const canvasContainerEl = document.getElementById('canvas-container');
-    applyDesktopPreferencesToConfig(window.aigrilDesktop?.preferences || {});
+    const initialPreferences = window.ailisDesktop?.preferences || {};
+    applyDesktopPreferencesToConfig(initialPreferences);
     applyPetWindowFrameCameraCompensation();
     const vrmSystem = new VRMModelSystem();
     installAvatarDialogueBubble({
@@ -103,37 +104,38 @@ window.addEventListener('DOMContentLoaded', async () => {
         avatarBoundsProvider: () => vrmSystem.getAvatarHitTestBounds?.()
     });
     const audioPlayer = new TTSAudioPlayer(vrmSystem);
-    let chatService = createChatService(window.aigrilDesktop?.preferences || {});
+    let chatService = createChatService(initialPreferences);
     const buildSpeechProvider = (speechMode = null) => createSpeechProvider({
         enableTTS: true,
         speechMode
     });
-    let speechProvider = buildSpeechProvider(window.aigrilDesktop?.preferences?.speechMode);
+    let speechProvider = buildSpeechProvider(initialPreferences.speechMode);
     const chatSystem = new ChatTTSSystem(vrmSystem, audioPlayer, chatService, {
-        speechProvider
+        speechProvider,
+        chunkedTtsEnabled: initialPreferences.chunkedTtsEnabled
     });
     const mouseHitTest = installPetMouseHitTest({
         rootElement: petShellEl,
         canvasElement: canvasContainerEl,
         avatarBoundsProvider: () => vrmSystem.getAvatarHitTestBounds?.(),
-        preferences: window.aigrilDesktop?.preferences || {}
+        preferences: initialPreferences
     });
-    const removePetCursorPointListener = window.aigrilDesktop?.onPetCursorPoint?.((payload = {}) => {
+    const removePetCursorPointListener = window.ailisDesktop?.onPetCursorPoint?.((payload = {}) => {
         mouseHitTest?.handleCursorPoint?.(payload);
     });
 
-    window.addEventListener('aigril-chat-ui-event', (event) => {
+    window.addEventListener('ailis-chat-ui-event', (event) => {
         emitDesktopChatEvent(event.detail);
     });
 
-    window.aigrilDesktop?.onChatMessageRequest?.((payload = {}) => {
+    window.ailisDesktop?.onChatMessageRequest?.((payload = {}) => {
         void chatSystem.sendExternalMessage(payload.content || '', {
             attachments: payload.attachments || [],
             source: payload.source || ''
         });
     });
 
-    window.aigrilDesktop?.onChatControlRequest?.((payload = {}) => {
+    window.ailisDesktop?.onChatControlRequest?.((payload = {}) => {
         if (payload.type === 'clear-conversation') {
             chatSystem.clearConversation();
         }
@@ -142,7 +144,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    window.aigrilDesktop?.onChatStateSyncRequest?.(() => {
+    window.ailisDesktop?.onChatStateSyncRequest?.(() => {
         emitDesktopChatEvent({
             type: 'snapshot',
             messages: chatSystem.getTranscriptSnapshot(),
@@ -150,7 +152,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
     });
 
-    window.aigrilDesktop?.onPreferencesUpdated?.(({ preferences = {} } = {}) => {
+    window.ailisDesktop?.onPreferencesUpdated?.(({ preferences = {} } = {}) => {
         applyDesktopPreferencesToConfig(preferences);
         applyPetWindowFrameCameraCompensation();
         speechProvider?.dispose?.();
@@ -162,7 +164,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             chatSystem.setChatService(chatService);
             window.chatService = chatService;
         }
-        chatSystem.applyRuntimePreferences();
+        chatSystem.applyRuntimePreferences(preferences);
         vrmSystem.applyPreferences();
         mouseHitTest?.updatePreferences(preferences);
         window.speechProvider = speechProvider;

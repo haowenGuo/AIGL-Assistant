@@ -8,8 +8,10 @@ const {
     buildAnthropicMessagesUrl,
     buildChatCompletionsUrl,
     buildGeminiGenerateContentUrl,
+    buildOllamaChatUrl,
     buildResponsesUrl,
     callDesktopLlmProvider,
+    classifyFetchFailure,
     checkDesktopLlmProvider,
     getProviderCapabilities
 } = require('../electron/desktop-llm-provider.cjs');
@@ -137,6 +139,21 @@ describe('desktop LLM provider', () => {
                 return;
             }
 
+            if (request.url === '/api/chat') {
+                response.end(JSON.stringify({
+                    message: {
+                        role: 'assistant',
+                        content: parsedBody.format === 'json'
+                            ? '{"ok":true,"kind":"json"}'
+                            : '本地 Ollama OK'
+                    },
+                    prompt_eval_count: 3,
+                    eval_count: 4,
+                    done: true
+                }));
+                return;
+            }
+
             if (Array.isArray(parsedBody.tools) && parsedBody.tools.length) {
                 response.end(JSON.stringify({
                     choices: [
@@ -237,6 +254,71 @@ describe('desktop LLM provider', () => {
 
         assert.equal(result.ok, false);
         assert.equal(result.code, 'needs_config');
+    });
+
+    it('classifies low-level fetch failures as transient network errors', () => {
+        const result = classifyFetchFailure(Object.assign(new Error('fetch failed'), {
+            cause: { code: 'ECONNRESET', message: 'socket hang up' }
+        }));
+
+        assert.equal(result.code, 'transient_network_error');
+        assert.equal(result.details.causeCode, 'ECONNRESET');
+    });
+
+    it('calls a vLLM OpenAI-compatible endpoint without requiring an API key', async () => {
+        const result = await callDesktopLlmProvider({
+            provider: 'vllm',
+            baseUrl: `${serverUrl}/v1`,
+            model: 'demo-local-model',
+            timeoutMs: 5000
+        }, {
+            messages: [{ role: 'user', content: '你好' }],
+            temperature: 0.2
+        });
+
+        assert.equal(result.ok, true);
+        assert.equal(result.provider, 'vllm');
+        assert.equal(result.content, '[action:wave][expression:happy]你好呀');
+        assert.equal(receivedRequest.url, '/v1/chat/completions');
+        assert.equal(receivedRequest.authorization, undefined);
+        assert.equal(receivedRequest.body.model, 'demo-local-model');
+        assert.equal(receivedRequest.body.temperature, 0.2);
+    });
+
+    it('calls an Ollama /api/chat endpoint without requiring an API key', async () => {
+        assert.equal(
+            buildOllamaChatUrl('http://127.0.0.1:11434'),
+            'http://127.0.0.1:11434/api/chat'
+        );
+        assert.equal(
+            buildOllamaChatUrl('http://127.0.0.1:11434/api'),
+            'http://127.0.0.1:11434/api/chat'
+        );
+        const result = await callDesktopLlmProvider({
+            provider: 'ollama',
+            baseUrl: serverUrl,
+            model: 'llama3.2',
+            timeoutMs: 5000
+        }, {
+            messages: [
+                { role: 'system', content: 'persona' },
+                { role: 'user', content: '你好' }
+            ],
+            temperature: 0.3
+        });
+
+        assert.equal(result.ok, true);
+        assert.equal(result.provider, 'ollama');
+        assert.equal(result.content, '本地 Ollama OK');
+        assert.equal(receivedRequest.url, '/api/chat');
+        assert.equal(receivedRequest.authorization, undefined);
+        assert.equal(receivedRequest.body.model, 'llama3.2');
+        assert.equal(receivedRequest.body.stream, false);
+        assert.deepEqual(receivedRequest.body.messages, [
+            { role: 'system', content: 'persona' },
+            { role: 'user', content: '你好' }
+        ]);
+        assert.equal(receivedRequest.body.options.temperature, 0.3);
     });
 
     it('passes image inputs through as OpenAI-compatible content parts', async () => {
@@ -443,6 +525,22 @@ describe('desktop LLM provider', () => {
         assert.equal(JSON.stringify(result).includes('secret-health-key'), false);
     });
 
+    it('runs Ollama health checks while skipping unsupported native tool calling', async () => {
+        const result = await checkDesktopLlmProvider({
+            provider: 'ollama',
+            baseUrl: serverUrl,
+            model: 'llama3.2',
+            timeoutMs: 5000
+        }, {
+            includeVision: false
+        });
+
+        assert.equal(result.ok, true);
+        assert.equal(result.checks.basic.ok, true);
+        assert.equal(result.checks.json.ok, true);
+        assert.equal(result.checks.toolCalling.skipped, true);
+    });
+
     it('reports model capability heuristics', () => {
         const caps = getProviderCapabilities({
             provider: 'gemini',
@@ -451,5 +549,23 @@ describe('desktop LLM provider', () => {
         assert.equal(caps.nativeToolCalling, true);
         assert.equal(caps.vision, true);
         assert.equal(caps.lowLatency, true);
+    });
+
+    it('reports local provider capabilities as model-dependent without native tool forcing', () => {
+        const ollamaCaps = getProviderCapabilities({
+            provider: 'ollama',
+            model: 'llama3.2'
+        });
+        const vllmCaps = getProviderCapabilities({
+            provider: 'vllm',
+            model: 'Qwen/Qwen2.5-7B-Instruct'
+        });
+
+        assert.equal(ollamaCaps.chat, true);
+        assert.equal(ollamaCaps.jsonMode, true);
+        assert.equal(ollamaCaps.nativeToolCalling, false);
+        assert.equal(vllmCaps.chat, true);
+        assert.equal(vllmCaps.jsonMode, true);
+        assert.equal(vllmCaps.nativeToolCalling, false);
     });
 });

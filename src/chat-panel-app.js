@@ -6,6 +6,12 @@ import {
     splitChatAttachments
 } from './chat-attachments.js';
 import { setMarkdownContent, setPlainTextContent } from './markdown-renderer.js';
+import {
+    getAsrLatencyPreset,
+    isFastAsrMode,
+    isVadRecognitionMode,
+    normalizeAsrRecognitionMode
+} from './realtime-voice/asr-latency-presets.js';
 
 function getMessageClassName(role) {
     if (role === 'user') {
@@ -42,6 +48,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const statusEl = document.getElementById('chat-status');
 
     let isBusy = false;
+    let interruptPending = false;
     let isRecording = false;
     let isTranscribing = false;
     let isCapturingVision = false;
@@ -50,9 +57,10 @@ window.addEventListener('DOMContentLoaded', () => {
     let fileDragDepth = 0;
     let currentMessages = [];
     let speechStatusText = '';
-    let currentRecognitionMode = window.aigrilDesktop?.preferences?.recognitionMode || 'auto-vad';
-    let currentPreferredMicDeviceId = window.aigrilDesktop?.preferences?.preferredMicDeviceId || '';
+    let currentRecognitionMode = window.ailisDesktop?.preferences?.recognitionMode || 'auto-vad';
+    let currentPreferredMicDeviceId = window.ailisDesktop?.preferences?.preferredMicDeviceId || '';
     let recorderController = null;
+    let activeAsrPreset = null;
     let recordingTimeoutId = 0;
     let levelPollingId = 0;
     let continuousRestartId = 0;
@@ -66,7 +74,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
     function getStatusText() {
         if (isCapturingVision) {
-            return 'AIGL 正在看截图...';
+            return 'AILIS 正在看截图...';
         }
         if (isRecording) {
             return speechStatusText || '正在听你说话...';
@@ -77,11 +85,17 @@ window.addEventListener('DOMContentLoaded', () => {
         if (speechStatusText) {
             return speechStatusText;
         }
+        if (interruptPending) {
+            return '正在中断当前对话...';
+        }
         if (isBusy) {
-            return 'AIGL 正在思考或说话...';
+            return 'AILIS 正在思考或说话...';
         }
         if (getRecognitionMode() === 'continuous') {
             return '自动 ASR 已开启，等待你说话...';
+        }
+        if (getRecognitionMode() === 'fast-vad') {
+            return '快速 ASR 已就绪';
         }
         return '已连接桌宠';
     }
@@ -101,8 +115,12 @@ window.addEventListener('DOMContentLoaded', () => {
     function updateComposerState() {
         const hasDraft = Boolean(inputEl.value.trim() || pendingVisionAttachment || pendingFileAttachments.length);
         sendBtnEl.dataset.mode = isBusy ? 'interrupt' : 'send';
-        setIconButtonLabel(sendBtnEl, isBusy ? '中断对话' : '发送');
-        sendBtnEl.disabled = isRecording || isTranscribing || isCapturingVision || (!isBusy && !hasDraft);
+        setIconButtonLabel(sendBtnEl, isBusy ? (interruptPending ? '正在中断' : '中断对话') : '发送');
+        sendBtnEl.disabled = isRecording ||
+            isTranscribing ||
+            isCapturingVision ||
+            interruptPending ||
+            (!isBusy && !hasDraft);
         statusEl.textContent = getStatusText();
 
         if (voiceBtnEl) {
@@ -116,23 +134,23 @@ window.addEventListener('DOMContentLoaded', () => {
                 voiceBtnEl.dataset.state = 'pause';
                 setIconButtonLabel(voiceBtnEl, '暂停自动听');
             } else if (isRecording) {
-                const isAutoVad = getRecognitionMode() === 'auto-vad';
-                voiceBtnEl.dataset.state = isAutoVad ? 'cancel' : 'stop';
-                setIconButtonLabel(voiceBtnEl, isAutoVad ? '取消语音输入' : '停止录音');
+                const isVadMode = isVadRecognitionMode(getRecognitionMode());
+                voiceBtnEl.dataset.state = isVadMode ? 'cancel' : 'stop';
+                setIconButtonLabel(voiceBtnEl, isVadMode ? '取消语音输入' : '停止录音');
             } else {
                 voiceBtnEl.dataset.state = 'mic';
-                setIconButtonLabel(voiceBtnEl, getRecognitionMode() === 'auto-vad' ? '自动听' : '语音输入');
+                setIconButtonLabel(voiceBtnEl, isVadRecognitionMode(getRecognitionMode()) ? '自动听' : '语音输入');
             }
         }
 
         if (visionBtnEl) {
             visionBtnEl.disabled = isBusy || isRecording || isTranscribing || isCapturingVision ||
-                typeof window.aigrilDesktop?.vision?.capture !== 'function';
+                typeof window.ailisDesktop?.vision?.capture !== 'function';
         }
 
         if (fileBtnEl) {
             fileBtnEl.disabled = isBusy || isRecording || isTranscribing || isCapturingVision ||
-                typeof window.aigrilDesktop?.files?.choose !== 'function';
+                typeof window.ailisDesktop?.files?.choose !== 'function';
         }
 
         if (clearChatBtnEl) {
@@ -293,11 +311,11 @@ window.addEventListener('DOMContentLoaded', () => {
         const cleanPaths = [...new Set((Array.isArray(paths) ? paths : [])
             .map((filePath) => String(filePath || '').trim())
             .filter(Boolean))];
-        if (!cleanPaths.length || typeof window.aigrilDesktop?.files?.describe !== 'function') {
+        if (!cleanPaths.length || typeof window.ailisDesktop?.files?.describe !== 'function') {
             return 0;
         }
         try {
-            const result = await window.aigrilDesktop.files.describe({ paths: cleanPaths, source });
+            const result = await window.ailisDesktop.files.describe({ paths: cleanPaths, source });
             const addedCount = mergePendingFileAttachments(result?.files || []);
             if (result?.skipped?.length) {
                 setTransientStatus(`有 ${result.skipped.length} 个文件无法添加`);
@@ -313,11 +331,11 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     async function chooseLocalFiles() {
-        if (typeof window.aigrilDesktop?.files?.choose !== 'function') {
+        if (typeof window.ailisDesktop?.files?.choose !== 'function') {
             return;
         }
         try {
-            const result = await window.aigrilDesktop.files.choose({});
+            const result = await window.ailisDesktop.files.choose({});
             if (result?.canceled) {
                 return;
             }
@@ -340,7 +358,7 @@ window.addEventListener('DOMContentLoaded', () => {
             return '';
         }
         try {
-            const electronPath = window.aigrilDesktop?.files?.getPathForFile?.(file);
+            const electronPath = window.ailisDesktop?.files?.getPathForFile?.(file);
             if (electronPath) {
                 return electronPath;
             }
@@ -393,7 +411,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     async function captureVision(target = 'chat-window', { transientStatus = true } = {}) {
-        if (isCapturingVision || typeof window.aigrilDesktop?.vision?.capture !== 'function') {
+        if (isCapturingVision || typeof window.ailisDesktop?.vision?.capture !== 'function') {
             return null;
         }
 
@@ -402,7 +420,7 @@ window.addEventListener('DOMContentLoaded', () => {
         updateComposerState();
 
         try {
-            const payload = await window.aigrilDesktop.vision.capture({ target });
+            const payload = await window.ailisDesktop.vision.capture({ target });
             if (!payload?.ok || !payload.snapshot) {
                 throw new Error(payload?.error || '截图失败');
             }
@@ -534,7 +552,7 @@ window.addEventListener('DOMContentLoaded', () => {
         const roleLabel = message.role === 'user'
             ? 'User'
             : message.role === 'assistant'
-                ? 'AIGL'
+                ? 'AILIS'
                 : message.role === 'system'
                     ? 'System'
                     : message.role || 'Message';
@@ -581,16 +599,21 @@ window.addEventListener('DOMContentLoaded', () => {
         pendingFileAttachments = [];
         renderVisionPreview();
         renderFilePreview();
-        window.aigrilDesktop?.sendChatControl?.({ type: 'clear-conversation' });
+        window.ailisDesktop?.sendChatControl?.({ type: 'clear-conversation' });
     }
 
     function sendCurrentMessage() {
         if (isBusy) {
-            window.aigrilDesktop?.sendChatControl?.({
+            if (interruptPending) {
+                return;
+            }
+            interruptPending = true;
+            window.ailisDesktop?.sendChatControl?.({
                 type: 'interrupt-conversation',
                 source: 'chat-panel'
             });
             setTransientStatus('正在中断当前对话...');
+            updateComposerState();
             return;
         }
         const content = inputEl.value.trim();
@@ -607,7 +630,7 @@ window.addEventListener('DOMContentLoaded', () => {
             ...(pendingVisionAttachment ? [pendingVisionAttachment] : []),
             ...pendingFileAttachments
         ]);
-        window.aigrilDesktop?.sendChatMessage?.({
+        window.ailisDesktop?.sendChatMessage?.({
             content: content || getDefaultMessageForAttachments(attachments),
             attachments,
             source: 'chat-panel'
@@ -646,13 +669,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     function getRecognitionMode() {
-        if (currentRecognitionMode === 'manual') {
-            return 'manual';
-        }
-        if (currentRecognitionMode === 'continuous') {
-            return 'continuous';
-        }
-        return 'auto-vad';
+        return normalizeAsrRecognitionMode(currentRecognitionMode);
     }
 
     function canStartContinuousAsr() {
@@ -751,18 +768,24 @@ window.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const autoVadMode = getRecognitionMode() === 'auto-vad' || getRecognitionMode() === 'continuous';
+        const recognitionMode = getRecognitionMode();
+        const asrPreset = getAsrLatencyPreset(recognitionMode, CONFIG);
+        activeAsrPreset = asrPreset;
+        const autoVadMode = asrPreset.autoVad;
         activeContinuousRecording = Boolean(continuous);
         speechStatusText = '正在请求麦克风权限...';
         updateComposerState();
 
         try {
             recorderController = await speechRecognition.createRecorder({
-                preferredDeviceId: currentPreferredMicDeviceId
+                preferredDeviceId: currentPreferredMicDeviceId,
+                timesliceMs: asrPreset.recorderTimesliceMs
             });
             isRecording = true;
             speechStatusText = continuous
                 ? '自动 ASR 监听中...'
+                : isFastAsrMode(recognitionMode)
+                ? '快速 ASR：我在听，直接说...'
                 : autoVadMode
                 ? '我在听，直接开口就好...'
                 : '正在听你说话...';
@@ -777,8 +800,8 @@ window.addEventListener('DOMContentLoaded', () => {
             clearLevelPolling();
 
             const listenStartedAt = Date.now();
-            const speechLevel = Math.max(CONFIG.ASR_CONTINUOUS_SPEECH_LEVEL, CONFIG.ASR_MIN_INPUT_LEVEL * 1.6);
-            const silenceLevel = CONFIG.ASR_MIN_INPUT_LEVEL;
+            const speechLevel = asrPreset.speechLevel;
+            const silenceLevel = asrPreset.silenceLevel;
             let speechStarted = false;
             let speechStartAt = 0;
             let lastVoiceAt = 0;
@@ -806,7 +829,7 @@ window.addEventListener('DOMContentLoaded', () => {
                         ? voiceActivity.voiceLike ||
                             (
                                 currentLevel >= speechLevel * 1.35 &&
-                                voiceActivity.voiceScore >= CONFIG.ASR_CONTINUOUS_VOICE_SCORE - 0.08 &&
+                                voiceActivity.voiceScore >= asrPreset.voiceScore - 0.08 &&
                                 voiceActivity.highRatio <= 0.48
                             )
                         : currentLevel >= speechLevel;
@@ -814,7 +837,7 @@ window.addEventListener('DOMContentLoaded', () => {
                     if (!speechStarted) {
                         if (voiceLike) {
                             voicedFrameCount += 1;
-                            if (voicedFrameCount >= CONFIG.ASR_CONTINUOUS_VOICE_FRAMES) {
+                            if (voicedFrameCount >= asrPreset.voiceFrames) {
                                 speechStarted = true;
                                 speechStartAt = now;
                                 lastVoiceAt = now;
@@ -829,7 +852,7 @@ window.addEventListener('DOMContentLoaded', () => {
                                 : (continuous ? '自动 ASR 监听中...' : '我在听，直接开口就好...');
                         }
 
-                        if (!speechStarted && now - listenStartedAt >= CONFIG.ASR_CONTINUOUS_IDLE_MS) {
+                        if (!speechStarted && now - listenStartedAt >= asrPreset.idleMs) {
                             if (!continuous) {
                                 setTransientStatus('这次没有听到你说话');
                             }
@@ -853,8 +876,8 @@ window.addEventListener('DOMContentLoaded', () => {
                     const speechDurationMs = now - speechStartAt;
                     const silenceDurationMs = now - lastVoiceAt;
                     if (
-                        speechDurationMs >= CONFIG.ASR_CONTINUOUS_MIN_SPEECH_MS &&
-                        silenceDurationMs >= CONFIG.ASR_CONTINUOUS_SILENCE_MS
+                        speechDurationMs >= asrPreset.minSpeechMs &&
+                        silenceDurationMs >= asrPreset.silenceMs
                     ) {
                         speechStatusText = '收到，我来识别...';
                         updateComposerState();
@@ -862,7 +885,7 @@ window.addEventListener('DOMContentLoaded', () => {
                         return;
                     }
 
-                    speechStatusText = silenceDurationMs >= 420
+                    speechStatusText = silenceDurationMs >= asrPreset.pauseHintMs
                         ? '检测到停顿，马上收尾...'
                         : '正在听你说...';
                     updateComposerState();
@@ -877,15 +900,16 @@ window.addEventListener('DOMContentLoaded', () => {
                     speechStatusText = '正在听你说话... 目前几乎没有收到声音';
                 }
                 updateComposerState();
-            }, 120);
+            }, asrPreset.levelPollingMs);
 
             recordingTimeoutId = window.setTimeout(() => {
                 void stopVoiceInput({ cancel: autoVadMode && !speechStarted });
-            }, CONFIG.ASR_MAX_RECORD_MS);
+            }, asrPreset.maxRecordMs);
         } catch (error) {
             console.error('启动本地语音识别失败：', error);
             setTransientStatus(`语音识别失败：${error.message || '无法打开麦克风'}`);
             activeContinuousRecording = false;
+            activeAsrPreset = null;
             syncContinuousAsr(3000);
         }
     }
@@ -896,8 +920,10 @@ window.addEventListener('DOMContentLoaded', () => {
         }
 
         const activeRecorder = recorderController;
+        const asrPreset = activeAsrPreset || getAsrLatencyPreset(getRecognitionMode(), CONFIG);
         const wasContinuousRecording = activeContinuousRecording;
         recorderController = null;
+        activeAsrPreset = null;
         activeContinuousRecording = false;
         clearRecordingTimeout();
         clearLevelPolling();
@@ -905,7 +931,9 @@ window.addEventListener('DOMContentLoaded', () => {
         isTranscribing = !cancel;
 
         if (!cancel) {
-            speechStatusText = '正在本地识别语音，首次加载会稍慢...';
+            speechStatusText = asrPreset.asrPreset === 'fast'
+                ? '快速 ASR 正在识别...'
+                : '正在本地识别语音，首次加载会稍慢...';
         } else {
             speechStatusText = '';
         }
@@ -921,8 +949,15 @@ window.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const result = await speechRecognition.transcribeAudioBlob(audioBlob);
+            const result = await speechRecognition.transcribeAudioBlob(audioBlob, {
+                preset: asrPreset.asrPreset
+            });
             const transcript = String(result?.text || '').trim();
+            console.info('[ASR] transcription finished', {
+                preset: result?.preset || asrPreset.asrPreset,
+                durationSeconds: result?.duration_seconds,
+                timing: result?.timing || result?.client_timing || null
+            });
 
             if (!transcript || isLikelyTranscriptNoise(transcript, result)) {
                 if (!wasContinuousRecording) {
@@ -961,7 +996,7 @@ window.addEventListener('DOMContentLoaded', () => {
             return;
         }
         if (isRecording) {
-            await stopVoiceInput({ cancel: getRecognitionMode() === 'auto-vad' });
+            await stopVoiceInput({ cancel: isVadRecognitionMode(getRecognitionMode()) });
             return;
         }
 
@@ -1051,18 +1086,21 @@ window.addEventListener('DOMContentLoaded', () => {
         if (recorderController) {
             await stopVoiceInput({ cancel: true });
         }
-        await window.aigrilDesktop?.hideChatWindow?.();
+        await window.ailisDesktop?.hideChatWindow?.();
     });
 
     settingsBtnEl?.addEventListener('click', () => {
-        void window.aigrilDesktop?.showControlPanel?.();
+        void window.ailisDesktop?.showControlPanel?.();
     });
 
-    window.aigrilDesktop?.onChatEvent?.((payload = {}) => {
+    window.ailisDesktop?.onChatEvent?.((payload = {}) => {
         if (payload.type === 'snapshot') {
             renderSnapshot(payload.messages || []);
             if (typeof payload.isBusy === 'boolean') {
                 isBusy = payload.isBusy;
+                if (!isBusy) {
+                    interruptPending = false;
+                }
             }
             updateComposerState();
             syncContinuousAsr();
@@ -1081,12 +1119,15 @@ window.addEventListener('DOMContentLoaded', () => {
 
         if (payload.type === 'state' && typeof payload.isBusy === 'boolean') {
             isBusy = payload.isBusy;
+            if (!isBusy) {
+                interruptPending = false;
+            }
             updateComposerState();
             syncContinuousAsr();
         }
     });
 
-    window.aigrilDesktop?.onPreferencesUpdated?.(({ preferences = {} } = {}) => {
+    window.ailisDesktop?.onPreferencesUpdated?.(({ preferences = {} } = {}) => {
         const previousMode = getRecognitionMode();
         currentRecognitionMode = preferences.recognitionMode || 'auto-vad';
         currentPreferredMicDeviceId = preferences.preferredMicDeviceId || '';
@@ -1098,7 +1139,7 @@ window.addEventListener('DOMContentLoaded', () => {
     });
 
     window.addEventListener('focus', () => {
-        window.aigrilDesktop?.requestChatStateSync?.();
+        window.ailisDesktop?.requestChatStateSync?.();
     });
 
     window.addEventListener('beforeunload', () => {

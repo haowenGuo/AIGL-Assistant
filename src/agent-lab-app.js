@@ -77,6 +77,32 @@ function formatTokens(value) {
     return String(Math.round(tokens));
 }
 
+function formatBytes(value) {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes < 0) {
+        return '-';
+    }
+    if (bytes >= 1024 * 1024) {
+        return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+    }
+    if (bytes >= 1024) {
+        return `${(bytes / 1024).toFixed(1)}KB`;
+    }
+    return `${Math.round(bytes)}B`;
+}
+
+function formatOutputArtifact(outputStore = {}) {
+    if (!outputStore?.outputId) {
+        return '';
+    }
+    return [
+        `完整输出 ${outputStore.outputId}`,
+        `${formatBytes(outputStore.bytes)} / ${Number(outputStore.lineCount) || 0} 行`,
+        outputStore.previewTruncated ? '预览已截断' : '预览完整',
+        '可用 output_read / output_tail / output_search 继续分析'
+    ].join(' · ');
+}
+
 function formatTime(value) {
     const date = value ? new Date(value) : null;
     return date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : '';
@@ -302,7 +328,42 @@ function renderTools(round) {
         const status = append(row, `badge ${tool.ok === false ? 'fail' : tool.ok === true ? 'ok' : ''}`, tool.status || 'started');
         status.title = tool.callId || '';
         append(row, '', formatDuration(tool.durationMs));
-        append(row, '', compact(tool.resultPreview || JSON.stringify(tool.args || {}), 260));
+        const preview = append(row, 'tool-preview');
+        append(preview, '', compact(tool.resultPreview || JSON.stringify(tool.args || {}), 260));
+        const outputArtifact = formatOutputArtifact(tool.outputStore);
+        if (outputArtifact) {
+            const artifact = append(preview, 'output-artifact', outputArtifact);
+            artifact.title = tool.outputStore?.path || outputArtifact;
+        }
+    });
+}
+
+function renderProgressNotes(round) {
+    const notes = Array.isArray(round.progressNotes) ? round.progressNotes.filter((note) => note?.text) : [];
+    if (!notes.length && !round.decision?.publicReasoning) {
+        return;
+    }
+    const card = append(elements.roundDetail, 'detail-card');
+    const head = append(card, 'panel-head');
+    append(head, 'panel-title', '模型公开进展');
+    append(head, 'panel-copy', '这里展示模型主动给用户看的关键进展，不展示隐藏推理链。');
+    const body = append(card, 'detail-body');
+    const visibleNotes = notes.length
+        ? notes
+        : [{
+              text: round.decision.publicReasoning,
+              source: round.decision.progressNoteSource || 'model_public_reasoning',
+              action: round.decision.action || '',
+              intent: round.decision.intent || ''
+          }];
+    visibleNotes.forEach((note) => {
+        const item = append(body, 'summary-line');
+        append(item, 'message-role', [
+            note.source || 'model_progress',
+            note.action ? `action=${note.action}` : '',
+            note.intent ? `intent=${note.intent}` : ''
+        ].filter(Boolean).join(' | '));
+        append(item, 'message-text', note.text);
     });
 }
 
@@ -329,6 +390,7 @@ function renderRoundDetail() {
     if (targetTool) {
         append(body, 'summary-line', `计划调用工具：${targetTool.tool || '-'}，标题：${targetTool.title || '-'}。`);
     }
+    renderProgressNotes(round);
     renderTools(round);
     renderMessages(round);
 }
@@ -357,7 +419,7 @@ function renderAnalysis() {
 }
 
 async function refreshRuns({ silent = false, selectLatest = false } = {}) {
-    if (!window.aigrilDesktop?.agentLab?.listRuns) {
+    if (!window.ailisDesktop?.agentLab?.listRuns) {
         setStatus('当前环境不支持 Electron Agent Lab IPC；请从桌面端打开。');
         renderAnalysis();
         return;
@@ -365,7 +427,7 @@ async function refreshRuns({ silent = false, selectLatest = false } = {}) {
     if (!silent) {
         setStatus('正在刷新运行记录...');
     }
-    const result = await window.aigrilDesktop.agentLab.listRuns({ limit: 60 });
+    const result = await window.ailisDesktop.agentLab.listRuns({ limit: 60 });
     runs = Array.isArray(result?.runs) ? result.runs : [];
     const next = selectLatest ? runs[0]?.runId : selectedRunId || runs[0]?.runId;
     renderRuns();
@@ -380,14 +442,14 @@ async function refreshRuns({ silent = false, selectLatest = false } = {}) {
 }
 
 async function loadAnalysis(runId, { silent = false } = {}) {
-    if (!runId || !window.aigrilDesktop?.agentLab?.getRunAnalysis) {
+    if (!runId || !window.ailisDesktop?.agentLab?.getRunAnalysis) {
         return;
     }
     selectedRunId = runId;
     if (!silent) {
         setStatus('正在读取 run 分析...');
     }
-    const result = await window.aigrilDesktop.agentLab.getRunAnalysis({
+    const result = await window.ailisDesktop.agentLab.getRunAnalysis({
         runId,
         transcriptLimit: 4000
     });
@@ -435,7 +497,7 @@ function buildRunPayload({ stepMode = false } = {}) {
 }
 
 async function runTask({ stepMode = false } = {}) {
-    if (!window.aigrilDesktop?.agentLab?.runTask) {
+    if (!window.ailisDesktop?.agentLab?.runTask) {
         setStatus('当前环境不支持 Agent Lab IPC。');
         return;
     }
@@ -449,7 +511,7 @@ async function runTask({ stepMode = false } = {}) {
     renderAnalysis();
     setStatus(stepMode ? '正在启动逐轮调试...' : '正在运行完整 Agent Loop...');
     try {
-        const result = await window.aigrilDesktop.agentLab.runTask(payload);
+        const result = await window.ailisDesktop.agentLab.runTask(payload);
         analysis = result?.analysis || null;
         selectedRunId = result?.runId || analysis?.runId || selectedRunId;
         selectedRoundIndex = Math.max(0, (analysis?.rounds?.length || 1) - 1);
@@ -476,7 +538,7 @@ async function continueRound() {
     renderAnalysis();
     setStatus(`正在进入第 ${Number(summary.nextIteration ?? 0) + 1} 轮...`);
     try {
-        const result = await window.aigrilDesktop.agentLab.continueTask({
+        const result = await window.ailisDesktop.agentLab.continueTask({
             runId: selectedRunId,
             debugSessionId: summary.debugSessionId,
             debugBreakAfterRound: true,
@@ -503,7 +565,7 @@ async function continueRound() {
 }
 
 async function interruptRun() {
-    if (!window.aigrilDesktop?.agentLab?.interruptTask) {
+    if (!window.ailisDesktop?.agentLab?.interruptTask) {
         setStatus('当前环境不支持 Agent 中断 IPC。');
         return;
     }
@@ -511,7 +573,7 @@ async function interruptRun() {
     const targetRunId = selectedRunId || analysis?.runId || '';
     setStatus(targetRunId ? '正在中断当前 run...' : '正在按 session 中断当前任务...');
     try {
-        const result = await window.aigrilDesktop.agentLab.interruptTask({
+        const result = await window.ailisDesktop.agentLab.interruptTask({
             runId: targetRunId,
             sessionId,
             reason: 'agent_lab_user_interrupt',
@@ -552,10 +614,10 @@ elements.runFullBtn?.addEventListener('click', () => void runTask({ stepMode: fa
 elements.nextRoundBtn?.addEventListener('click', () => void continueRound());
 elements.interruptRunBtn?.addEventListener('click', () => void interruptRun());
 elements.refreshBtn?.addEventListener('click', () => void refreshRuns());
-elements.openControlBtn?.addEventListener('click', () => void window.aigrilDesktop?.showControlPanel?.());
-elements.closeBtn?.addEventListener('click', () => void window.aigrilDesktop?.closeCurrentWindow?.());
+elements.openControlBtn?.addEventListener('click', () => void window.ailisDesktop?.showControlPanel?.());
+elements.closeBtn?.addEventListener('click', () => void window.ailisDesktop?.closeCurrentWindow?.());
 
-window.aigrilDesktop?.gateway?.onEvent?.((event = {}) => {
+window.ailisDesktop?.gateway?.onEvent?.((event = {}) => {
     const runId = event.payload?.runId || event.runId || '';
     if (/^(agent|tool|runtime)\./.test(event.type || '')) {
         scheduleRefresh(runId);

@@ -46,7 +46,7 @@ function parseArgs(argv = process.argv.slice(2)) {
         outputDir: DEFAULT_OUTPUT_DIR,
         datasetDir: DEFAULT_DATASET_DIR,
         runId: '',
-        username: 'AIGL-local-codex',
+        username: 'AILIS-local-codex',
         taskIds: [],
         offset: 0,
         limit: 0,
@@ -217,6 +217,69 @@ async function readParquetRows(metadataPaths) {
     return JSON.parse(result.stdout || '[]');
 }
 
+async function readRowsFromResultCache(args, reason = '') {
+    const entries = await fs.readdir(args.outputDir, { withFileTypes: true }).catch(() => []);
+    const files = await Promise.all(entries
+        .filter((entry) => entry.isFile() && /\.(jsonl|summary\.json)$/i.test(entry.name))
+        .map(async (entry) => {
+            const fullPath = path.join(args.outputDir, entry.name);
+            const stat = await fs.stat(fullPath).catch(() => null);
+            return { name: entry.name, fullPath, mtimeMs: stat?.mtimeMs || 0 };
+        }));
+    files.sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name));
+    const goldByTaskId = new Map();
+    for (const file of files.filter((entry) => /\.summary\.json$/i.test(entry.name))) {
+        const summary = JSON.parse(await fs.readFile(file.fullPath, 'utf8').catch(() => '{}') || '{}');
+        for (const item of summary?.score?.per_task || []) {
+            const taskId = normalizeText(item.task_id);
+            const finalAnswer = normalizeText(item.final_answer);
+            if (taskId && finalAnswer && !goldByTaskId.has(taskId)) {
+                goldByTaskId.set(taskId, finalAnswer);
+            }
+        }
+    }
+    const rowsByTaskId = new Map();
+    for (const file of files.filter((entry) => /\.jsonl$/i.test(entry.name))) {
+        const lines = (await fs.readFile(file.fullPath, 'utf8').catch(() => '')).split(/\r?\n/).filter(Boolean);
+        for (const line of lines) {
+            let item = null;
+            try {
+                item = JSON.parse(line);
+            } catch {
+                continue;
+            }
+            if (item?.record_type && item.record_type !== 'final') {
+                continue;
+            }
+            const taskId = normalizeText(item.task_id);
+            const question = normalizeText(item.question);
+            if (!taskId || !question || rowsByTaskId.has(taskId)) {
+                continue;
+            }
+            rowsByTaskId.set(taskId, {
+                task_id: taskId,
+                question,
+                level: Number(item.level) || 1,
+                final_answer: goldByTaskId.get(taskId) || normalizeText(item.final_answer),
+                source_file_name: normalizeText(item.file_name),
+                source_file_path: normalizeText(item.file_path),
+                cached_file_path: normalizeText(item.file_path),
+                metadata_path: `cache:${path.basename(file.fullPath)}`
+            });
+        }
+    }
+    let rows = [...rowsByTaskId.values()];
+    if (args.taskIds.length) {
+        const wanted = new Set(args.taskIds);
+        rows = rows.filter((row) => wanted.has(row.task_id));
+    }
+    if (!rows.length) {
+        throw new Error(`Unable to recover GAIA rows from local result cache after parquet read failed: ${reason}`);
+    }
+    const offsetRows = rows.slice(args.offset);
+    return args.limit ? offsetRows.slice(0, args.limit) : offsetRows;
+}
+
 function firstPresent(row, keys) {
     for (const key of keys) {
         const value = row?.[key];
@@ -283,7 +346,16 @@ async function loadOfficialRows(args) {
     for (const repoPath of metadataRepoPaths) {
         metadataPaths.push(await downloadHubFile(args, repoPath));
     }
-    const rawRows = await readParquetRows(metadataPaths);
+    let rawRows = [];
+    try {
+        rawRows = await readParquetRows(metadataPaths);
+    } catch (error) {
+        if (!args.skipDownload) {
+            throw error;
+        }
+        console.warn(`WARNING: parquet read failed; recovering GAIA rows from local result cache. ${error?.message || String(error)}`);
+        return await readRowsFromResultCache(args, error?.message || String(error));
+    }
     let rows = rawRows.map((row) => normalizeRow(row, args.split))
         .filter((row) => row.task_id && row.question);
     if (args.taskIds.length) {
@@ -303,8 +375,11 @@ async function stageQuestions(args, rows) {
         let stagedFileName = '';
         let stagedFilePath = '';
         if (row.source_file_path || row.source_file_name) {
+            const cachedPath = normalizeText(row.cached_file_path || row.source_file_path);
             const repoPath = row.source_file_path || repoPathFromRow(row, args.split);
-            const localPath = await downloadHubFile(args, repoPath);
+            const localPath = cachedPath && path.isAbsolute(cachedPath) && fsSync.existsSync(cachedPath)
+                ? cachedPath
+                : await downloadHubFile(args, repoPath);
             const baseName = path.basename(row.source_file_name || repoPath);
             stagedFileName = `${safeFileSegment(row.task_id)}-${safeFileSegment(baseName, 'attachment')}`;
             stagedFilePath = path.join(args.stageFilesDir, stagedFileName);
@@ -438,9 +513,9 @@ async function runLiteRunner(args, baseUrl) {
         '--temperature', String(args.temperature),
         '--task-retries', String(args.taskRetries),
         '--benchmark-name', args.benchmarkName,
-        '--agent-code', `AIGL local HumanClaw Gateway ${args.benchmarkName} runner`
+        '--agent-code', `AILIS local AILIS Gateway ${args.benchmarkName} runner`
     ];
-    if (/^(1|true|yes|on)$/i.test(process.env.AIGL_GAIA_DIRECT_TOOL_EXECUTOR || '')) {
+    if (/^(1|true|yes|on)$/i.test(process.env.AILIS_GAIA_DIRECT_TOOL_EXECUTOR || '')) {
         liteArgs.push('--direct-tool-executor');
     }
     if (args.localSubmit) {

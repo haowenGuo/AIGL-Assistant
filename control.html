@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HumanClaw Control Panel</title>
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <title>AILIS Control Panel</title>
     <style>
         * {
             box-sizing: border-box;
@@ -706,7 +707,7 @@
     <div id="shell">
         <header id="header">
             <div id="header-main">
-                <div id="eyebrow">HumanClaw Desktop</div>
+                <div id="eyebrow">AILIS Desktop</div>
                 <div id="title">控制面板</div>
                 <div id="subtitle">普通设置只保留日常会用到的选择；复杂参数收在高级设置里。保存后会立即同步到角色窗口和聊天窗。</div>
             </div>
@@ -1011,7 +1012,7 @@
                         <label class="field inline">
                             <div>
                                 <div class="field-label">完全控制能力</div>
-                                <div class="field-help">开启后 AIGL 可以按你的指令执行命令、读写文件和调用本地工具；关闭后高风险动作会重新要求确认。</div>
+                                <div class="field-help">开启后 AILIS 可以按你的指令执行命令、读写文件和调用本地工具；关闭后高风险动作会重新要求确认。</div>
                             </div>
                             <input id="computer-control-enabled" type="checkbox">
                         </label>
@@ -1029,7 +1030,7 @@
                 <section class="panel-section">
                     <div class="section-head">
                         <div class="section-title">模型 API</div>
-                        <div class="section-copy">选择服务商和模型后填写 Key；高级接口字段默认收起，Key 只保存在本机。</div>
+                        <div class="section-copy">云端模型填写 Key；Ollama/vLLM 本地模型通常只需要服务地址和模型名。</div>
                     </div>
                     <div class="section-body">
                         <label class="field">
@@ -1037,7 +1038,8 @@
                                 <span class="field-label">服务商</span>
                             </div>
                             <select id="llm-preset"></select>
-                            <div class="field-help" id="llm-preset-help">选择服务商后，只需要填写对应平台的 API Key。</div>
+                            <div class="field-help" id="llm-preset-help">选择服务商后填写对应配置；本地 Ollama/vLLM 通常不需要 API Key。</div>
+                            <div class="field-help" id="llm-setup-help">本地模型：先启动 Ollama 或 vLLM 服务，再在这里选择对应预设。</div>
                         </label>
 
                         <label class="field">
@@ -1048,12 +1050,47 @@
                             <div class="field-help">日常对话优先选低延迟模型；复杂任务再选更强的 Pro/Max/Sonnet 类模型。</div>
                         </label>
 
+                        <div class="field" id="vllm-model-catalog-panel" hidden>
+                            <div class="field-meta">
+                                <span class="field-label">vLLM 开源模型目录</span>
+                                <button id="vllm-model-refresh-btn" class="ghost-btn" type="button">实时查找</button>
+                            </div>
+                            <div class="split-2">
+                                <label class="field">
+                                    <div class="field-meta">
+                                        <span class="field-label">来源</span>
+                                    </div>
+                                    <select id="vllm-model-source">
+                                        <option value="both">HF + 魔塔</option>
+                                        <option value="hf">Hugging Face</option>
+                                        <option value="modelscope">ModelScope 魔塔</option>
+                                    </select>
+                                </label>
+                                <label class="field">
+                                    <div class="field-meta">
+                                        <span class="field-label">关键词</span>
+                                    </div>
+                                    <input id="vllm-model-query" type="search" placeholder="例如 Qwen3、DeepSeek、Llama、Coder">
+                                </label>
+                            </div>
+                            <div class="field-meta">
+                                <select id="vllm-model-catalog"></select>
+                                <button id="vllm-model-apply-btn" class="ghost-btn" type="button">使用选中模型</button>
+                                <button id="vllm-runtime-diagnose-btn" class="ghost-btn" type="button">诊断环境</button>
+                                <button id="vllm-runtime-deploy-btn" class="primary-btn" type="button">自动配置并部署</button>
+                                <button id="vllm-runtime-cancel-btn" class="ghost-btn" type="button" disabled>取消部署</button>
+                            </div>
+                            <div class="field-help" id="vllm-model-catalog-status">选择 vLLM 后可从 Hugging Face / ModelScope 实时查找最新开源模型。</div>
+                            <div class="field-help" id="vllm-runtime-status">vLLM 本地运行时尚未诊断。</div>
+                            <pre class="field-help" id="vllm-runtime-log" style="white-space: pre-wrap; max-height: 160px; overflow: auto;"></pre>
+                        </div>
+
                         <label class="field">
                             <div class="field-meta">
                                 <span class="field-label">API Key</span>
                                 <button id="clear-llm-key-btn" class="ghost-btn" type="button">清除 Key</button>
                             </div>
-                            <input id="llm-api-key" type="password" autocomplete="off" placeholder="留空表示保留已保存 Key">
+                            <input id="llm-api-key" type="password" autocomplete="off" placeholder="本地可留空；云端留空表示保留已保存 Key">
                             <div class="field-help" id="llm-key-state">Key 状态读取中...</div>
                         </label>
 
@@ -1188,6 +1225,11 @@
                             <select id="speech-mode"></select>
                         </label>
 
+                        <label class="toggle-row">
+                            <input id="chunked-tts-enabled" type="checkbox">
+                            <span>分段语音（边生成边播放）</span>
+                        </label>
+
                         <details class="advanced-section">
                             <summary>高级 ElevenLabs 参数</summary>
                             <div class="section-body">
@@ -1217,23 +1259,83 @@
                         <div class="split-2">
                             <label class="field">
                                 <div class="field-meta">
+                                    <span class="field-label">语言风格档</span>
+                                </div>
+                                <select id="elevenlabs-language-code">
+                                    <option value="zh">中文温柔二次元</option>
+                                    <option value="en">English gentle anime</option>
+                                    <option value="ja">日本語やさしいアニメ</option>
+                                </select>
+                                <div class="field-help">切换语言会套用对应的高质量 ElevenLabs 参数。</div>
+                            </label>
+                            <label class="field">
+                                <div class="field-meta">
                                     <span class="field-label">ElevenLabs 模型</span>
                                 </div>
                                 <input id="elevenlabs-model-id" type="text" autocomplete="off" placeholder="eleven_multilingual_v2">
                             </label>
+                        </div>
+
+                        <div class="split-2">
                             <label class="field">
                                 <div class="field-meta">
                                     <span class="field-label">音频格式</span>
                                 </div>
                                 <input id="elevenlabs-output-format" type="text" autocomplete="off" placeholder="mp3_44100_128">
                             </label>
+                            <label class="field">
+                                <div class="field-meta">
+                                    <span class="field-label">ElevenLabs 超时（ms）</span>
+                                </div>
+                                <input id="elevenlabs-timeout" type="number" min="5000" max="120000" step="1000">
+                            </label>
                         </div>
 
                         <label class="field">
                             <div class="field-meta">
-                                <span class="field-label">ElevenLabs 超时（ms）</span>
+                                <span class="field-label">低延迟优化</span>
+                                <span class="field-value" id="elevenlabs-optimize-latency-value"></span>
                             </div>
-                            <input id="elevenlabs-timeout" type="number" min="5000" max="120000" step="1000">
+                            <input id="elevenlabs-optimize-latency" type="range" min="0" max="4" step="1">
+                            <div class="field-help">0 更稳更自然，3-4 更快但更容易牺牲音质。</div>
+                        </label>
+
+                        <label class="toggle-row">
+                            <input id="elevenlabs-speaker-boost" type="checkbox">
+                            <span>Speaker Boost</span>
+                        </label>
+
+                        <label class="field">
+                            <div class="field-meta">
+                                <span class="field-label">语速</span>
+                                <span class="field-value" id="elevenlabs-speed-value"></span>
+                            </div>
+                            <input id="elevenlabs-speed" type="range" min="0.7" max="1.2" step="0.01">
+                        </label>
+
+                        <div class="split-2">
+                            <label class="field">
+                                <div class="field-meta">
+                                    <span class="field-label">稳定度</span>
+                                    <span class="field-value" id="elevenlabs-stability-value"></span>
+                                </div>
+                                <input id="elevenlabs-stability" type="range" min="0" max="1" step="0.01">
+                            </label>
+                            <label class="field">
+                                <div class="field-meta">
+                                    <span class="field-label">相似度增强</span>
+                                    <span class="field-value" id="elevenlabs-similarity-value"></span>
+                                </div>
+                                <input id="elevenlabs-similarity" type="range" min="0" max="1" step="0.01">
+                            </label>
+                        </div>
+
+                        <label class="field">
+                            <div class="field-meta">
+                                <span class="field-label">风格强度</span>
+                                <span class="field-value" id="elevenlabs-style-value"></span>
+                            </div>
+                            <input id="elevenlabs-style" type="range" min="0" max="1" step="0.01">
                         </label>
                             </div>
                         </details>
@@ -1252,8 +1354,20 @@
                                 <span class="field-label">语音识别模式</span>
                             </div>
                             <select id="recognition-mode"></select>
-                            <div class="field-help">按钮模式需要点一次开始听；自动 ASR 会持续监听，并先做人声/噪音门禁。</div>
+                            <div class="field-help">快速 ASR 会更早收尾并优先低延迟；自动 ASR 会持续监听，并先做人声/噪音门禁。</div>
                         </label>
+
+                        <div class="field">
+                            <div class="field-meta">
+                                <span class="field-label">本地语音运行时</span>
+                                <span>
+                                    <button id="voice-runtime-diagnose-btn" class="ghost-btn" type="button">诊断</button>
+                                    <button id="voice-runtime-bootstrap-btn" class="ghost-btn" type="button">一键修复</button>
+                                </span>
+                            </div>
+                            <div class="field-help" id="voice-runtime-status">本地语音运行时尚未诊断。</div>
+                            <div class="field-help" id="voice-runtime-plan"></div>
+                        </div>
 
                         <details class="advanced-section">
                             <summary>高级本地语音参数</summary>
@@ -1292,14 +1406,14 @@
                         <div class="section-body">
                             <label class="field">
                                 <div class="field-meta">
-                                    <span class="field-label">HumanClaw 状态目录</span>
+                                    <span class="field-label">AILIS 状态目录</span>
                                     <span class="field-actions">
-                                        <button id="choose-humanclaw-state-dir-btn" class="ghost-btn" type="button">选择目录</button>
-                                        <button id="reset-humanclaw-state-dir-btn" class="ghost-btn" type="button">使用默认</button>
+                                        <button id="choose-ailis-state-dir-btn" class="ghost-btn" type="button">选择目录</button>
+                                        <button id="reset-ailis-state-dir-btn" class="ghost-btn" type="button">使用默认</button>
                                     </span>
                                 </div>
-                                <input id="humanclaw-state-dir" type="text" autocomplete="off" placeholder="留空使用软件根目录下的 .humanclaw-state">
-                                <div class="field-help" id="humanclaw-state-dir-help">默认目录读取中...</div>
+                                <input id="ailis-state-dir" type="text" autocomplete="off" placeholder="留空使用软件根目录下的 .ailis-state">
+                                <div class="field-help" id="ailis-state-dir-help">默认目录读取中...</div>
                             </label>
 
                             <div class="field">
@@ -1324,6 +1438,7 @@
                                     <span class="field-actions">
                                         <button id="refresh-memory-btn" class="ghost-btn" type="button">刷新记忆</button>
                                         <button id="reset-affinity-btn" class="ghost-btn" type="button">重置好感度</button>
+                                        <button id="clear-memory-btn" class="danger-btn" type="button">清空记忆</button>
                                     </span>
                                 </div>
                                 <div class="field-help" id="memory-status-text">记忆状态读取中...</div>

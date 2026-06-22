@@ -21,6 +21,7 @@ const elements = {
     cameraHeightValue: document.getElementById('camera-height-value'),
     cameraTargetY: document.getElementById('camera-target-y'),
     cameraTargetYValue: document.getElementById('camera-target-y-value'),
+    chunkedTtsEnabled: document.getElementById('chunked-tts-enabled'),
     closeBtn: document.getElementById('close-btn'),
     computerControlEnabled: document.getElementById('computer-control-enabled'),
     conversationMode: document.getElementById('conversation-mode'),
@@ -41,8 +42,20 @@ const elements = {
     elevenLabsApiBase: document.getElementById('elevenlabs-api-base'),
     elevenLabsApiKey: document.getElementById('elevenlabs-api-key'),
     elevenLabsKeyState: document.getElementById('elevenlabs-key-state'),
+    elevenLabsLanguageCode: document.getElementById('elevenlabs-language-code'),
     elevenLabsModelId: document.getElementById('elevenlabs-model-id'),
+    elevenLabsOptimizeLatency: document.getElementById('elevenlabs-optimize-latency'),
+    elevenLabsOptimizeLatencyValue: document.getElementById('elevenlabs-optimize-latency-value'),
     elevenLabsOutputFormat: document.getElementById('elevenlabs-output-format'),
+    elevenLabsSimilarity: document.getElementById('elevenlabs-similarity'),
+    elevenLabsSimilarityValue: document.getElementById('elevenlabs-similarity-value'),
+    elevenLabsSpeakerBoost: document.getElementById('elevenlabs-speaker-boost'),
+    elevenLabsSpeed: document.getElementById('elevenlabs-speed'),
+    elevenLabsSpeedValue: document.getElementById('elevenlabs-speed-value'),
+    elevenLabsStability: document.getElementById('elevenlabs-stability'),
+    elevenLabsStabilityValue: document.getElementById('elevenlabs-stability-value'),
+    elevenLabsStyle: document.getElementById('elevenlabs-style'),
+    elevenLabsStyleValue: document.getElementById('elevenlabs-style-value'),
     elevenLabsTimeout: document.getElementById('elevenlabs-timeout'),
     elevenLabsVoiceId: document.getElementById('elevenlabs-voice-id'),
     llmApiKey: document.getElementById('llm-api-key'),
@@ -56,17 +69,30 @@ const elements = {
     llmPreset: document.getElementById('llm-preset'),
     llmPresetHelp: document.getElementById('llm-preset-help'),
     llmProvider: document.getElementById('llm-provider'),
+    llmSetupHelp: document.getElementById('llm-setup-help'),
     llmTemperature: document.getElementById('llm-temperature'),
     llmTemperatureValue: document.getElementById('llm-temperature-value'),
     llmTimeout: document.getElementById('llm-timeout'),
+    vllmModelApplyBtn: document.getElementById('vllm-model-apply-btn'),
+    vllmModelCatalog: document.getElementById('vllm-model-catalog'),
+    vllmModelCatalogPanel: document.getElementById('vllm-model-catalog-panel'),
+    vllmModelCatalogStatus: document.getElementById('vllm-model-catalog-status'),
+    vllmModelQuery: document.getElementById('vllm-model-query'),
+    vllmModelRefreshBtn: document.getElementById('vllm-model-refresh-btn'),
+    vllmModelSource: document.getElementById('vllm-model-source'),
+    vllmRuntimeCancelBtn: document.getElementById('vllm-runtime-cancel-btn'),
+    vllmRuntimeDeployBtn: document.getElementById('vllm-runtime-deploy-btn'),
+    vllmRuntimeDiagnoseBtn: document.getElementById('vllm-runtime-diagnose-btn'),
+    vllmRuntimeLog: document.getElementById('vllm-runtime-log'),
+    vllmRuntimeStatus: document.getElementById('vllm-runtime-status'),
     micHelp: document.getElementById('mic-help'),
     memoryBlockList: document.getElementById('memory-block-list'),
     memoryPathText: document.getElementById('memory-path-text'),
     memoryStatusText: document.getElementById('memory-status-text'),
-    humanClawStateDir: document.getElementById('humanclaw-state-dir'),
-    humanClawStateDirHelp: document.getElementById('humanclaw-state-dir-help'),
-    chooseHumanClawStateDirBtn: document.getElementById('choose-humanclaw-state-dir-btn'),
-    resetHumanClawStateDirBtn: document.getElementById('reset-humanclaw-state-dir-btn'),
+    ailisStateDir: document.getElementById('ailis-state-dir'),
+    ailisStateDirHelp: document.getElementById('ailis-state-dir-help'),
+    chooseAILISStateDirBtn: document.getElementById('choose-ailis-state-dir-btn'),
+    resetAILISStateDirBtn: document.getElementById('reset-ailis-state-dir-btn'),
     openclawRuntimeText: document.getElementById('openclaw-runtime-text'),
     openclawStatusText: document.getElementById('openclaw-status-text'),
     openAgentLabBtn: document.getElementById('open-agent-lab-btn'),
@@ -89,6 +115,7 @@ const elements = {
     recognitionModeText: document.getElementById('recognition-mode-text'),
     refreshMemoryBtn: document.getElementById('refresh-memory-btn'),
     refreshMicsBtn: document.getElementById('refresh-mics-btn'),
+    clearMemoryBtn: document.getElementById('clear-memory-btn'),
     resetAffinityBtn: document.getElementById('reset-affinity-btn'),
     resetBtn: document.getElementById('reset-btn'),
     renderAmbientFill: document.getElementById('render-ambient-fill'),
@@ -118,19 +145,21 @@ const elements = {
     ttsRateValue: document.getElementById('tts-rate-value'),
     ttsVolume: document.getElementById('tts-volume'),
     ttsVolumeValue: document.getElementById('tts-volume-value'),
-    userDataPath: document.getElementById('user-data-path')
+    userDataPath: document.getElementById('user-data-path'),
+    voiceRuntimeBootstrapBtn: document.getElementById('voice-runtime-bootstrap-btn'),
+    voiceRuntimeDiagnoseBtn: document.getElementById('voice-runtime-diagnose-btn'),
+    voiceRuntimePlan: document.getElementById('voice-runtime-plan'),
+    voiceRuntimeStatus: document.getElementById('voice-runtime-status')
 };
 
 const speechModeLabels = {
+    off: '关闭语音',
+    server: 'ElevenLabs 云端语音',
     cosyvoice3: 'CosyVoice3 本地高质量',
-    kokoro: 'Kokoro-82M 最低延迟',
-    local: '浏览器 speechSynthesis',
-    server: 'ElevenLabs 顶级音质',
-    vits: '本地 VITS 实验模型',
-    off: '关闭语音'
 };
 
 const recognitionModeLabels = {
+    'fast-vad': '快速 ASR：低延迟按钮',
     'auto-vad': '按钮开启 ASR',
     continuous: '自动 ASR 常驻检测',
     manual: '手动开始/停止'
@@ -141,25 +170,68 @@ const conversationModeLabels = {
     daily: '日常对话：低延迟'
 };
 
+const elevenLabsLanguagePresets = {
+    zh: {
+        label: '中文温柔二次元',
+        modelId: 'eleven_multilingual_v2',
+        outputFormat: 'mp3_44100_128',
+        optimizeStreamingLatency: 0,
+        stability: 0.58,
+        similarityBoost: 0.78,
+        style: 0.05,
+        speed: 0.9,
+        useSpeakerBoost: true
+    },
+    en: {
+        label: 'English gentle anime',
+        modelId: 'eleven_multilingual_v2',
+        outputFormat: 'mp3_44100_128',
+        optimizeStreamingLatency: 0,
+        stability: 0.55,
+        similarityBoost: 0.8,
+        style: 0.08,
+        speed: 0.92,
+        useSpeakerBoost: true
+    },
+    ja: {
+        label: '日本語やさしいアニメ',
+        modelId: 'eleven_multilingual_v2',
+        outputFormat: 'mp3_44100_128',
+        optimizeStreamingLatency: 0,
+        stability: 0.52,
+        similarityBoost: 0.78,
+        style: 0.08,
+        speed: 0.88,
+        useSpeakerBoost: true
+    }
+};
+const ELEVENLABS_LANGUAGE_CODES = Object.freeze(Object.keys(elevenLabsLanguagePresets));
+
 const llmProviderLabels = {
     'openai-compatible': 'OpenAI-compatible',
     'openai-responses': 'OpenAI Responses',
     anthropic: 'Anthropic Claude',
-    gemini: 'Google Gemini'
+    gemini: 'Google Gemini',
+    vllm: 'vLLM 本地',
+    ollama: 'Ollama 本地'
 };
 
 const fallbackLlmProviderDefaultBaseUrls = {
     'openai-compatible': 'https://ark.cn-beijing.volces.com/api/v3',
     'openai-responses': 'https://api.openai.com/v1',
     anthropic: 'https://api.anthropic.com',
-    gemini: 'https://generativelanguage.googleapis.com/v1beta'
+    gemini: 'https://generativelanguage.googleapis.com/v1beta',
+    vllm: 'http://127.0.0.1:8000/v1',
+    ollama: 'http://127.0.0.1:11434'
 };
 
 const fallbackLlmProviderDefaultModels = {
     'openai-compatible': 'doubao-seed-2-0-mini-260215',
     'openai-responses': 'gpt-4.1-mini',
     anthropic: 'claude-3-5-haiku-latest',
-    gemini: 'gemini-2.0-flash'
+    gemini: 'gemini-2.0-flash',
+    vllm: 'Qwen/Qwen2.5-7B-Instruct',
+    ollama: 'llama3.2'
 };
 
 const LLM_PRESET_CUSTOM_ID = 'custom';
@@ -268,6 +340,33 @@ const llmPresetCatalog = [
         ]
     },
     {
+        id: 'ollama',
+        label: 'Ollama 本地',
+        help: '本机离线模型；Base 填服务根地址，不要加 /api/chat。模型名必须和 ollama list 里的名字一致，API Key 通常留空。',
+        provider: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        models: [
+            { id: 'llama3.2', label: 'Llama 3.2（默认本地）' },
+            { id: 'qwen2.5:7b', label: 'Qwen2.5 7B（中文/通用）' },
+            { id: 'qwen2.5:14b', label: 'Qwen2.5 14B（更强）' },
+            { id: 'llama3.1:8b', label: 'Llama 3.1 8B' },
+            { id: 'gemma3:4b', label: 'Gemma 3 4B（轻量）' }
+        ]
+    },
+    {
+        id: 'vllm',
+        label: 'vLLM 本地 / 局域网',
+        help: 'OpenAI-compatible 本地服务；Base 必须填到 /v1，模型名必须等于 vLLM /v1/models 返回的 id。API Key 可留空。',
+        provider: 'vllm',
+        baseUrl: 'http://127.0.0.1:8000/v1',
+        models: [
+            { id: 'Qwen/Qwen2.5-7B-Instruct', label: 'Qwen2.5 7B Instruct' },
+            { id: 'Qwen/Qwen2.5-14B-Instruct', label: 'Qwen2.5 14B Instruct' },
+            { id: 'meta-llama/Llama-3.1-8B-Instruct', label: 'Llama 3.1 8B Instruct' },
+            { id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B', label: 'DeepSeek R1 Distill Qwen 7B' }
+        ]
+    },
+    {
         id: LLM_PRESET_CUSTOM_ID,
         label: '自定义 / 其他 OpenAI-compatible',
         help: '高级模式：手动填写 Provider、API Base 和模型 ID。',
@@ -278,11 +377,11 @@ const llmPresetCatalog = [
 ];
 
 const renderProfileLabels = {
-    aigl_soft_anime_mtoon: '柔和动漫 MToon',
-    aigl_bright_companion_mtoon: '明亮陪伴 MToon',
-    aigl_cinematic_rim_toon: '电影感边缘光 Toon',
-    aigl_material_hybrid_npr: '材质混合 NPR',
-    aigl_hard_cel_mtoon: '硬边赛璐璐 MToon'
+    ailis_soft_anime_mtoon: '柔和动漫 MToon',
+    ailis_bright_companion_mtoon: '明亮陪伴 MToon',
+    ailis_cinematic_rim_toon: '电影感边缘光 Toon',
+    ailis_material_hybrid_npr: '材质混合 NPR',
+    ailis_hard_cel_mtoon: '硬边赛璐璐 MToon'
 };
 
 const PET_BASE_WIDTH = 720;
@@ -300,14 +399,26 @@ let dialoguePreviewScale = 1;
 let dialoguePreviewDrag = null;
 let pendingClearLlmKey = false;
 let pendingClearElevenLabsKey = false;
+let draftElevenLabsVoiceProfiles = {};
+let draftElevenLabsActiveLanguageCode = 'zh';
 let llmProviderDefaultBaseUrls = { ...fallbackLlmProviderDefaultBaseUrls };
 let llmProviderDefaultModels = { ...fallbackLlmProviderDefaultModels };
 let lastLlmProviderValue = 'openai-compatible';
+let vllmModelCatalogResults = [];
+let vllmModelCatalogLastResult = null;
+let vllmModelCatalogRequestId = 0;
+let vllmModelCatalogInFlight = false;
+let vllmRuntimePollTimer = null;
 const pendingClearEmailSecrets = {
     qq: false,
     gmail: false,
     outlook: false
 };
+
+function isLocalLlmProvider(provider = elements.llmProvider?.value) {
+    return provider === 'ollama' || provider === 'vllm';
+}
+
 const emailElements = {
     qq: {
         account: elements.emailQqAccount,
@@ -412,6 +523,186 @@ function formatFpsLimit(value) {
     return `${normalizeRenderFpsLimit(value)} FPS`;
 }
 
+function normalizeElevenLabsOptimizeLatency(value, fallbackValue = 1) {
+    return Math.round(clampNumber(value, 0, 4, fallbackValue, 0));
+}
+
+function normalizeElevenLabsLanguageCode(value, fallbackValue = 'zh') {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(elevenLabsLanguagePresets, normalizedValue)) {
+        return normalizedValue;
+    }
+    return fallbackValue;
+}
+
+function normalizeElevenLabsSetting(value, fallbackValue) {
+    return clampNumber(value, 0, 1, fallbackValue, 2);
+}
+
+function normalizeElevenLabsSpeed(value, fallbackValue = 0.9) {
+    return clampNumber(value, 0.7, 1.2, fallbackValue, 2);
+}
+
+function formatElevenLabsOptimizeLatency(value) {
+    const normalizedValue = normalizeElevenLabsOptimizeLatency(value);
+    if (normalizedValue === 0) {
+        return '0 音质优先';
+    }
+    if (normalizedValue <= 2) {
+        return `${normalizedValue} 平衡`;
+    }
+    return `${normalizedValue} 速度优先`;
+}
+
+function getDefaultElevenLabsVoiceProfile(languageCode) {
+    const normalizedLanguage = normalizeElevenLabsLanguageCode(languageCode);
+    const preset = elevenLabsLanguagePresets[normalizedLanguage] || elevenLabsLanguagePresets.zh;
+    return {
+        voiceId: '',
+        modelId: preset.modelId,
+        languageCode: normalizedLanguage,
+        outputFormat: preset.outputFormat,
+        optimizeStreamingLatency: preset.optimizeStreamingLatency,
+        stability: preset.stability,
+        similarityBoost: preset.similarityBoost,
+        style: preset.style,
+        speed: preset.speed,
+        useSpeakerBoost: preset.useSpeakerBoost
+    };
+}
+
+function normalizeElevenLabsVoiceProfile(profile = {}, languageCode = 'zh', fallback = {}) {
+    const normalizedLanguage = normalizeElevenLabsLanguageCode(languageCode);
+    const defaults = getDefaultElevenLabsVoiceProfile(normalizedLanguage);
+    const source = profile && typeof profile === 'object' ? profile : {};
+    const fallbackSource = fallback && typeof fallback === 'object' ? fallback : {};
+    return {
+        voiceId: String(source.voiceId || fallbackSource.voiceId || defaults.voiceId),
+        modelId: String(source.modelId || fallbackSource.modelId || defaults.modelId),
+        languageCode: normalizedLanguage,
+        outputFormat: String(source.outputFormat || fallbackSource.outputFormat || defaults.outputFormat),
+        optimizeStreamingLatency: normalizeElevenLabsOptimizeLatency(
+            source.optimizeStreamingLatency ??
+                fallbackSource.optimizeStreamingLatency ??
+                defaults.optimizeStreamingLatency,
+            defaults.optimizeStreamingLatency
+        ),
+        stability: normalizeElevenLabsSetting(
+            source.stability ?? fallbackSource.stability ?? defaults.stability,
+            defaults.stability
+        ),
+        similarityBoost: normalizeElevenLabsSetting(
+            source.similarityBoost ?? fallbackSource.similarityBoost ?? defaults.similarityBoost,
+            defaults.similarityBoost
+        ),
+        style: normalizeElevenLabsSetting(source.style ?? fallbackSource.style ?? defaults.style, defaults.style),
+        speed: normalizeElevenLabsSpeed(source.speed ?? fallbackSource.speed ?? defaults.speed, defaults.speed),
+        useSpeakerBoost: (source.useSpeakerBoost ?? fallbackSource.useSpeakerBoost ?? defaults.useSpeakerBoost) !== false
+    };
+}
+
+function normalizeElevenLabsVoiceProfiles(profiles = {}, preferences = {}) {
+    const source = profiles && typeof profiles === 'object' ? profiles : {};
+    const legacyLanguage = normalizeElevenLabsLanguageCode(preferences.elevenLabsLanguageCode, 'zh');
+    const legacyProfile = {
+        voiceId: preferences.elevenLabsVoiceId,
+        modelId: preferences.elevenLabsModelId,
+        outputFormat: preferences.elevenLabsOutputFormat,
+        optimizeStreamingLatency: preferences.elevenLabsOptimizeStreamingLatency,
+        stability: preferences.elevenLabsStability,
+        similarityBoost: preferences.elevenLabsSimilarityBoost,
+        style: preferences.elevenLabsStyle,
+        speed: preferences.elevenLabsSpeed,
+        useSpeakerBoost: preferences.elevenLabsUseSpeakerBoost
+    };
+    const voiceFallback = { voiceId: preferences.elevenLabsVoiceId };
+    return Object.fromEntries(ELEVENLABS_LANGUAGE_CODES.map((languageCode) => {
+        const profile = source[languageCode] && typeof source[languageCode] === 'object'
+            ? source[languageCode]
+            : {};
+        const fallback = Object.keys(profile).length
+            ? voiceFallback
+            : {
+                ...voiceFallback,
+                ...(languageCode === legacyLanguage ? legacyProfile : {})
+            };
+        return [
+            languageCode,
+            normalizeElevenLabsVoiceProfile(profile, languageCode, fallback)
+        ];
+    }));
+}
+
+function readElevenLabsProfileFromFields(languageCode = elements.elevenLabsLanguageCode.value) {
+    const normalizedLanguage = normalizeElevenLabsLanguageCode(languageCode);
+    return normalizeElevenLabsVoiceProfile({
+        voiceId: elements.elevenLabsVoiceId.value,
+        modelId: elements.elevenLabsModelId.value,
+        outputFormat: elements.elevenLabsOutputFormat.value,
+        optimizeStreamingLatency: Number(elements.elevenLabsOptimizeLatency.value),
+        stability: Number(elements.elevenLabsStability.value),
+        similarityBoost: Number(elements.elevenLabsSimilarity.value),
+        style: Number(elements.elevenLabsStyle.value),
+        speed: Number(elements.elevenLabsSpeed.value),
+        useSpeakerBoost: elements.elevenLabsSpeakerBoost.checked
+    }, normalizedLanguage);
+}
+
+function writeElevenLabsProfileToFields(profile, languageCode) {
+    const normalizedLanguage = normalizeElevenLabsLanguageCode(languageCode);
+    const normalizedProfile = normalizeElevenLabsVoiceProfile(profile, normalizedLanguage);
+    elements.elevenLabsLanguageCode.value = normalizedLanguage;
+    elements.elevenLabsVoiceId.value = normalizedProfile.voiceId;
+    elements.elevenLabsModelId.value = normalizedProfile.modelId;
+    elements.elevenLabsOutputFormat.value = normalizedProfile.outputFormat;
+    elements.elevenLabsOptimizeLatency.value = String(normalizedProfile.optimizeStreamingLatency);
+    elements.elevenLabsStability.value = String(normalizedProfile.stability);
+    elements.elevenLabsSimilarity.value = String(normalizedProfile.similarityBoost);
+    elements.elevenLabsStyle.value = String(normalizedProfile.style);
+    elements.elevenLabsSpeed.value = String(normalizedProfile.speed);
+    elements.elevenLabsSpeakerBoost.checked = normalizedProfile.useSpeakerBoost !== false;
+    updateRangeLabels();
+}
+
+function captureCurrentElevenLabsProfile() {
+    const languageCode = normalizeElevenLabsLanguageCode(draftElevenLabsActiveLanguageCode);
+    draftElevenLabsVoiceProfiles = normalizeElevenLabsVoiceProfiles(draftElevenLabsVoiceProfiles, currentPreferences || {});
+    draftElevenLabsVoiceProfiles[languageCode] = readElevenLabsProfileFromFields(languageCode);
+}
+
+function switchElevenLabsVoiceProfile(languageCode) {
+    captureCurrentElevenLabsProfile();
+    const nextLanguage = normalizeElevenLabsLanguageCode(languageCode);
+    draftElevenLabsActiveLanguageCode = nextLanguage;
+    draftElevenLabsVoiceProfiles = normalizeElevenLabsVoiceProfiles(draftElevenLabsVoiceProfiles, currentPreferences || {});
+    writeElevenLabsProfileToFields(draftElevenLabsVoiceProfiles[nextLanguage], nextLanguage);
+    const label = elevenLabsLanguagePresets[nextLanguage]?.label || nextLanguage;
+    setStatus(`已切换到 ${label} 语音配置。`);
+}
+
+function applyElevenLabsLanguagePreset(languageCode) {
+    const normalizedLanguage = normalizeElevenLabsLanguageCode(languageCode);
+    const preset = elevenLabsLanguagePresets[normalizedLanguage];
+    if (!preset) {
+        return;
+    }
+
+    elements.elevenLabsLanguageCode.value = normalizedLanguage;
+    elements.elevenLabsModelId.value = preset.modelId;
+    elements.elevenLabsOutputFormat.value = preset.outputFormat;
+    elements.elevenLabsOptimizeLatency.value = String(preset.optimizeStreamingLatency);
+    elements.elevenLabsStability.value = String(preset.stability);
+    elements.elevenLabsSimilarity.value = String(preset.similarityBoost);
+    elements.elevenLabsStyle.value = String(preset.style);
+    elements.elevenLabsSpeed.value = String(preset.speed);
+    elements.elevenLabsSpeakerBoost.checked = preset.useSpeakerBoost;
+    draftElevenLabsActiveLanguageCode = normalizedLanguage;
+    draftElevenLabsVoiceProfiles = normalizeElevenLabsVoiceProfiles(draftElevenLabsVoiceProfiles, currentPreferences || {});
+    draftElevenLabsVoiceProfiles[normalizedLanguage] = readElevenLabsProfileFromFields(normalizedLanguage);
+    updateRangeLabels();
+    setStatus(`已套用 ${preset.label} ElevenLabs 语音参数。`);
+}
+
 function clampNumber(value, minimum, maximum, fallbackValue, digits = 2) {
     const numericValue = Number(value);
     if (!Number.isFinite(numericValue)) {
@@ -489,6 +780,13 @@ function updateRangeLabels() {
     elements.renderResolutionScaleValue.textContent = formatResolutionScale(elements.renderResolutionScale.value);
     elements.renderFpsLimitValue.textContent = formatFpsLimit(getFpsFromSliderIndex(elements.renderFpsLimit.value));
     elements.renderShadowQualityValue.textContent = formatQualityLevel(elements.renderShadowQuality.value);
+    elements.elevenLabsOptimizeLatencyValue.textContent = formatElevenLabsOptimizeLatency(
+        elements.elevenLabsOptimizeLatency.value
+    );
+    elements.elevenLabsSpeedValue.textContent = formatValue(elements.elevenLabsSpeed.value);
+    elements.elevenLabsStabilityValue.textContent = formatValue(elements.elevenLabsStability.value);
+    elements.elevenLabsSimilarityValue.textContent = formatValue(elements.elevenLabsSimilarity.value);
+    elements.elevenLabsStyleValue.textContent = formatValue(elements.elevenLabsStyle.value);
     elements.petMouseHitTestWidthValue.textContent = formatHitTestScale(
         elements.petMouseHitTestWidth.value || 0.58,
         0.58,
@@ -524,19 +822,24 @@ function normalizePreferences(preferences = {}) {
     );
 
     const emailProfiles = normalizeEmailProfiles(preferences.emailProfiles || {});
+    const elevenLabsVoiceProfiles = normalizeElevenLabsVoiceProfiles(
+        preferences.elevenLabsVoiceProfiles,
+        preferences
+    );
 
     return {
         petScale: String(preferences.petScale ?? '0.85'),
         petSkipTaskbar: Boolean(preferences.petSkipTaskbar),
         speechMode: String(preferences.speechMode || 'cosyvoice3'),
+        chunkedTtsEnabled: preferences.chunkedTtsEnabled !== false,
         recognitionMode: String(preferences.recognitionMode || 'auto-vad'),
         conversationMode: ['assistant', 'daily'].includes(String(preferences.conversationMode || '').trim())
             ? String(preferences.conversationMode).trim()
             : 'assistant',
         preferredMicDeviceId: String(preferences.preferredMicDeviceId || ''),
-        humanClawStateDir: String(preferences.humanClawStateDir || ''),
-        humanClawResolvedStateDir: String(preferences.humanClawResolvedStateDir || ''),
-        humanClawDefaultStateDir: String(preferences.humanClawDefaultStateDir || ''),
+        ailisStateDir: String(preferences.ailisStateDir || ''),
+        ailisResolvedStateDir: String(preferences.ailisResolvedStateDir || ''),
+        ailisDefaultStateDir: String(preferences.ailisDefaultStateDir || ''),
         llmProvider: String(preferences.llmProvider || 'openai-compatible'),
         llmBaseUrl: String(preferences.llmBaseUrl || 'https://ark.cn-beijing.volces.com/api/v3'),
         llmModel: String(preferences.llmModel || 'doubao-seed-2-0-mini-260215'),
@@ -550,10 +853,21 @@ function normalizePreferences(preferences = {}) {
         elevenLabsApiBase: String(preferences.elevenLabsApiBase || 'https://api.elevenlabs.io'),
         elevenLabsVoiceId: String(preferences.elevenLabsVoiceId || ''),
         elevenLabsModelId: String(preferences.elevenLabsModelId || 'eleven_multilingual_v2'),
+        elevenLabsLanguageCode: normalizeElevenLabsLanguageCode(preferences.elevenLabsLanguageCode, 'zh'),
         elevenLabsOutputFormat: String(preferences.elevenLabsOutputFormat || 'mp3_44100_128'),
         elevenLabsTimeoutMs: Math.round(
             Math.min(120000, Math.max(5000, Number(preferences.elevenLabsTimeoutMs ?? 60000)))
         ),
+        elevenLabsOptimizeStreamingLatency: normalizeElevenLabsOptimizeLatency(
+            preferences.elevenLabsOptimizeStreamingLatency,
+            0
+        ),
+        elevenLabsStability: normalizeElevenLabsSetting(preferences.elevenLabsStability, 0.58),
+        elevenLabsSimilarityBoost: normalizeElevenLabsSetting(preferences.elevenLabsSimilarityBoost, 0.78),
+        elevenLabsStyle: normalizeElevenLabsSetting(preferences.elevenLabsStyle, 0.05),
+        elevenLabsSpeed: normalizeElevenLabsSpeed(preferences.elevenLabsSpeed, 0.9),
+        elevenLabsUseSpeakerBoost: preferences.elevenLabsUseSpeakerBoost !== false,
+        elevenLabsVoiceProfiles,
         elevenLabsApiKeyConfigured: Boolean(preferences.elevenLabsApiKeyConfigured),
         elevenLabsApiKeySource: String(preferences.elevenLabsApiKeySource || 'none'),
         computerControlEnabled: preferences.computerControlEnabled !== false,
@@ -566,7 +880,7 @@ function normalizePreferences(preferences = {}) {
             String(preferences.renderProfileId || '')
         )
             ? String(preferences.renderProfileId)
-            : 'aigl_soft_anime_mtoon',
+            : 'ailis_soft_anime_mtoon',
         renderLightYawDeg: clampNumber(preferences.renderLightYawDeg, -75, 75, 0, 0),
         renderKeyLightScale: clampNumber(preferences.renderKeyLightScale, 0.65, 1.45, 1, 2),
         renderAmbientFillScale: clampNumber(preferences.renderAmbientFillScale, 0.55, 1.35, 1, 2),
@@ -654,18 +968,20 @@ function normalizeEmailProfiles(profiles = {}) {
 }
 
 function readFormPreferences({ includeSecret = false } = {}) {
+    captureCurrentElevenLabsProfile();
     const nextPreferences = normalizePreferences({
         petScale: Number(elements.petScale.value),
         petSkipTaskbar: !elements.petShowTaskbar.checked,
         speechMode: elements.speechMode.value,
+        chunkedTtsEnabled: elements.chunkedTtsEnabled.checked,
         recognitionMode: elements.recognitionMode.value,
         conversationMode: elements.conversationMode?.value || currentPreferences?.conversationMode || 'assistant',
         preferredMicDeviceId: elements.preferredMic.value,
-        humanClawStateDir: elements.humanClawStateDir
-            ? elements.humanClawStateDir.value.trim()
-            : currentPreferences?.humanClawStateDir || '',
-        humanClawResolvedStateDir: currentPreferences?.humanClawResolvedStateDir || '',
-        humanClawDefaultStateDir: currentPreferences?.humanClawDefaultStateDir || '',
+        ailisStateDir: elements.ailisStateDir
+            ? elements.ailisStateDir.value.trim()
+            : currentPreferences?.ailisStateDir || '',
+        ailisResolvedStateDir: currentPreferences?.ailisResolvedStateDir || '',
+        ailisDefaultStateDir: currentPreferences?.ailisDefaultStateDir || '',
         llmProvider: elements.llmProvider.value,
         llmBaseUrl: elements.llmBaseUrl.value,
         llmModel: elements.llmModel.value,
@@ -680,8 +996,16 @@ function readFormPreferences({ includeSecret = false } = {}) {
         elevenLabsApiBase: elements.elevenLabsApiBase.value,
         elevenLabsVoiceId: elements.elevenLabsVoiceId.value,
         elevenLabsModelId: elements.elevenLabsModelId.value,
+        elevenLabsLanguageCode: elements.elevenLabsLanguageCode.value,
         elevenLabsOutputFormat: elements.elevenLabsOutputFormat.value,
         elevenLabsTimeoutMs: Number(elements.elevenLabsTimeout.value),
+        elevenLabsOptimizeStreamingLatency: Number(elements.elevenLabsOptimizeLatency.value),
+        elevenLabsStability: Number(elements.elevenLabsStability.value),
+        elevenLabsSimilarityBoost: Number(elements.elevenLabsSimilarity.value),
+        elevenLabsStyle: Number(elements.elevenLabsStyle.value),
+        elevenLabsSpeed: Number(elements.elevenLabsSpeed.value),
+        elevenLabsUseSpeakerBoost: elements.elevenLabsSpeakerBoost.checked,
+        elevenLabsVoiceProfiles: draftElevenLabsVoiceProfiles,
         elevenLabsApiKeyConfigured: pendingClearElevenLabsKey
             ? false
             : Boolean(currentPreferences?.elevenLabsApiKeyConfigured),
@@ -858,6 +1182,13 @@ function syncLlmKeyState() {
         return;
     }
 
+    if (isLocalLlmProvider()) {
+        elements.llmKeyState.textContent = elements.llmApiKey.value.trim()
+            ? '本次测试会使用输入的本地服务 Key；保存后常规调用优先使用本地专属环境变量。'
+            : '本地 Ollama/vLLM 通常无需 Key；如 vLLM 需要鉴权，请设置 VLLM_API_KEY。';
+        return;
+    }
+
     if (currentPreferences?.llmApiKeyConfigured) {
         if (currentPreferences.llmApiKeySource === 'environment') {
             elements.llmKeyState.textContent = elements.llmApiKey.value.trim()
@@ -951,6 +1282,70 @@ function getProviderDefaultModel(provider) {
     return llmProviderDefaultModels[provider] || fallbackLlmProviderDefaultModels[provider] || '';
 }
 
+function formatCompactCount(value) {
+    const numeric = Number(value) || 0;
+    if (numeric >= 1_000_000) {
+        return `${(numeric / 1_000_000).toFixed(numeric >= 10_000_000 ? 0 : 1)}M`;
+    }
+    if (numeric >= 1_000) {
+        return `${(numeric / 1_000).toFixed(numeric >= 10_000 ? 0 : 1)}K`;
+    }
+    return String(Math.round(numeric));
+}
+
+function formatBytesCompact(value) {
+    const bytes = Number(value) || 0;
+    if (!bytes) {
+        return '';
+    }
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex += 1;
+    }
+    return `${size.toFixed(unitIndex >= 3 ? 1 : 0)}${units[unitIndex]}`;
+}
+
+function formatVllmCatalogModelLabel(model = {}) {
+    const source = model.source === 'hf' ? 'HF' : model.sourceLabel || 'Model';
+    const downloads = model.downloads ? `${formatCompactCount(model.downloads)} downloads` : '';
+    const likes = model.likes ? `${formatCompactCount(model.likes)} likes` : '';
+    const size = formatBytesCompact(model.sizeBytes);
+    const meta = [downloads, likes, size, model.fit?.label].filter(Boolean).join(' · ');
+    return `[${source}] ${model.id}${meta ? ` · ${meta}` : ''}`;
+}
+
+function getDynamicVllmModelOptions() {
+    const seen = new Set();
+    const options = [];
+    for (const model of vllmModelCatalogResults) {
+        const id = String(model?.id || '').trim();
+        if (!id || seen.has(id.toLowerCase())) {
+            continue;
+        }
+        seen.add(id.toLowerCase());
+        options.push({
+            id,
+            label: formatVllmCatalogModelLabel(model),
+            dynamic: true
+        });
+    }
+    return options;
+}
+
+function getLlmPresetModelOptions(preset) {
+    const staticModels = Array.isArray(preset?.models) ? preset.models : [];
+    if (preset?.id !== 'vllm') {
+        return staticModels;
+    }
+    const seen = new Set(staticModels.map((model) => String(model.id || '').toLowerCase()));
+    const dynamicModels = getDynamicVllmModelOptions()
+        .filter((model) => !seen.has(String(model.id || '').toLowerCase()));
+    return [...staticModels, ...dynamicModels];
+}
+
 function normalizeBaseUrlForPreset(value = '') {
     return String(value || '').trim().replace(/\/+$/, '').toLowerCase();
 }
@@ -972,7 +1367,7 @@ function findMatchingLlmPreset({ provider = '', baseUrl = '', model = '' } = {})
         preset.id !== LLM_PRESET_CUSTOM_ID &&
         preset.provider === normalizedProvider &&
         normalizeBaseUrlForPreset(preset.baseUrl) === normalizedBaseUrl &&
-        preset.models.some((entry) => entry.id === normalizedModel)
+        getLlmPresetModelOptions(preset).some((entry) => entry.id === normalizedModel)
     );
     if (exactPreset) {
         return {
@@ -989,7 +1384,7 @@ function findMatchingLlmPreset({ provider = '', baseUrl = '', model = '' } = {})
     if (basePreset) {
         return {
             preset: basePreset,
-            model: basePreset.models.some((entry) => entry.id === normalizedModel)
+            model: getLlmPresetModelOptions(basePreset).some((entry) => entry.id === normalizedModel)
                 ? normalizedModel
                 : LLM_PRESET_CUSTOM_ID
         };
@@ -1019,7 +1414,7 @@ function fillLlmModelPresetOptions(presetId, selectedModel = '') {
         return;
     }
     const preset = getLlmPreset(presetId);
-    const modelOptions = preset?.models || [];
+    const modelOptions = getLlmPresetModelOptions(preset);
     elements.llmModelPreset.innerHTML = '';
 
     if (!modelOptions.length) {
@@ -1053,7 +1448,411 @@ function syncLlmPresetHelp(presetId = elements.llmPreset?.value) {
         return;
     }
     const preset = getLlmPreset(presetId);
-    elements.llmPresetHelp.textContent = preset?.help || '选择服务商后，只需要填写对应平台的 API Key。';
+    elements.llmPresetHelp.textContent = preset?.help || '选择服务商后填写对应配置；本地 Ollama/vLLM 通常不需要 API Key。';
+}
+
+function getLocalLlmSetupHelp(provider = elements.llmProvider?.value) {
+    if (provider === 'ollama') {
+        return [
+            'Ollama 使用步骤：1. 运行 ollama serve；2. 运行 ollama pull llama3.2 或其他模型；',
+            '3. AILIS 的 API Base 填 http://127.0.0.1:11434，不要写 /api/chat；',
+            '4. 模型 ID 填 ollama list 里看到的名字，例如 llama3.2 或 qwen2.5:7b；5. API Key 留空。'
+        ].join('');
+    }
+    if (provider === 'vllm') {
+        return [
+            'vLLM 一站式部署：运行 pnpm llm:vllm:oneclick；国内源可运行 pnpm llm:vllm:oneclick:modelscope。脚本会在 WSL/Linux 创建 venv、安装 vLLM、下载模型并启动服务；',
+            'AILIS 的 API Base 填 http://127.0.0.1:8000/v1；',
+            '模型 ID 填 /v1/models 返回的 id，通常等于启动时的模型名；API Key 默认留空。'
+        ].join('');
+    }
+    return '本地模型：先启动 Ollama 或 vLLM 服务，再选择对应预设；云端模型则填写平台 API Key。';
+}
+
+function syncLlmSetupHelp() {
+    if (!elements.llmSetupHelp) {
+        return;
+    }
+    elements.llmSetupHelp.textContent = getLocalLlmSetupHelp(elements.llmProvider?.value);
+}
+
+function isVllmModelCatalogVisible() {
+    return elements.llmPreset?.value === 'vllm' || elements.llmProvider?.value === 'vllm';
+}
+
+function renderVllmModelCatalogSelect() {
+    if (!elements.vllmModelCatalog) {
+        return;
+    }
+    elements.vllmModelCatalog.innerHTML = '';
+    if (!vllmModelCatalogResults.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = '尚未加载实时模型目录';
+        elements.vllmModelCatalog.appendChild(option);
+        elements.vllmModelCatalog.disabled = true;
+        if (elements.vllmModelApplyBtn) {
+            elements.vllmModelApplyBtn.disabled = true;
+        }
+        return;
+    }
+    vllmModelCatalogResults.forEach((model, index) => {
+        const option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = formatVllmCatalogModelLabel(model);
+        option.title = [model.url, model.fit?.detail].filter(Boolean).join('\n');
+        elements.vllmModelCatalog.appendChild(option);
+    });
+    elements.vllmModelCatalog.disabled = false;
+    if (elements.vllmModelApplyBtn) {
+        elements.vllmModelApplyBtn.disabled = false;
+    }
+}
+
+function renderVllmModelCatalogStatus(result = null) {
+    if (!elements.vllmModelCatalogStatus) {
+        return;
+    }
+    const currentResult = result || vllmModelCatalogLastResult;
+    if (vllmModelCatalogInFlight) {
+        elements.vllmModelCatalogStatus.textContent = '正在从 Hugging Face / ModelScope 实时查找 vLLM 可用模型...';
+        return;
+    }
+    if (!currentResult && !vllmModelCatalogResults.length) {
+        elements.vllmModelCatalogStatus.textContent =
+            '选择 vLLM 后可从 Hugging Face / ModelScope 实时查找最新开源模型。';
+        return;
+    }
+    const sourceSummary = (currentResult?.sources || [])
+        .map((source) => `${source.sourceLabel || source.source}: ${source.returned}/${source.total}`)
+        .join('；');
+    const errorSummary = (currentResult?.errors || [])
+        .map((error) => error.message)
+        .filter(Boolean)
+        .join('；');
+    const parts = [
+        `已加载 ${vllmModelCatalogResults.length} 个候选`,
+        sourceSummary ? `来源：${sourceSummary}` : '',
+        errorSummary ? `部分来源失败：${errorSummary}` : '',
+        '选择后会写入模型 ID；部署仍以 vLLM 实际启动的 /v1/models 为准。'
+    ].filter(Boolean);
+    elements.vllmModelCatalogStatus.textContent = parts.join(' ');
+}
+
+function syncVllmModelCatalogPanel({ maybeRefresh = false } = {}) {
+    if (!elements.vllmModelCatalogPanel) {
+        return;
+    }
+    const visible = isVllmModelCatalogVisible();
+    elements.vllmModelCatalogPanel.hidden = !visible;
+    if (!visible) {
+        return;
+    }
+    renderVllmModelCatalogSelect();
+    renderVllmModelCatalogStatus();
+    if (maybeRefresh && !vllmModelCatalogResults.length && !vllmModelCatalogInFlight) {
+        void refreshVllmModelCatalog();
+    }
+}
+
+async function refreshVllmModelCatalog() {
+    if (!window.ailisDesktop?.llm?.searchVllmModels) {
+        if (elements.vllmModelCatalogStatus) {
+            elements.vllmModelCatalogStatus.textContent = '当前桌面宿主不支持实时模型目录。';
+        }
+        return;
+    }
+    const requestId = ++vllmModelCatalogRequestId;
+    vllmModelCatalogInFlight = true;
+    if (elements.vllmModelRefreshBtn) {
+        elements.vllmModelRefreshBtn.disabled = true;
+        elements.vllmModelRefreshBtn.textContent = '查找中...';
+    }
+    renderVllmModelCatalogStatus();
+    try {
+        const result = await window.ailisDesktop.llm.searchVllmModels({
+            source: elements.vllmModelSource?.value || 'both',
+            query: elements.vllmModelQuery?.value || '',
+            limit: 40
+        });
+        if (requestId !== vllmModelCatalogRequestId) {
+            return;
+        }
+        vllmModelCatalogLastResult = result || null;
+        vllmModelCatalogResults = Array.isArray(result?.models) ? result.models : [];
+        renderVllmModelCatalogSelect();
+        if (elements.llmPreset?.value === 'vllm') {
+            fillLlmModelPresetOptions('vllm', elements.llmModel?.value || '');
+        }
+        renderVllmModelCatalogStatus(result);
+    } catch (error) {
+        vllmModelCatalogLastResult = {
+            sources: [],
+            errors: [{ message: error.message || String(error) }]
+        };
+        if (elements.vllmModelCatalogStatus) {
+            elements.vllmModelCatalogStatus.textContent = `实时模型目录加载失败：${error.message || error}`;
+        }
+    } finally {
+        if (requestId === vllmModelCatalogRequestId) {
+            vllmModelCatalogInFlight = false;
+            if (elements.vllmModelRefreshBtn) {
+                elements.vllmModelRefreshBtn.disabled = false;
+                elements.vllmModelRefreshBtn.textContent = '实时查找';
+            }
+            renderVllmModelCatalogStatus();
+        }
+    }
+}
+
+function getSelectedVllmCatalogModel() {
+    if (elements.vllmModelCatalog && vllmModelCatalogResults.length) {
+        return vllmModelCatalogResults[Number(elements.vllmModelCatalog.value)] || null;
+    }
+    const id = elements.llmModel?.value?.trim() || '';
+    return id
+        ? { id, source: elements.vllmModelSource?.value || 'modelscope', sourceLabel: '当前模型' }
+        : null;
+}
+
+function applySelectedVllmCatalogModel() {
+    const model = getSelectedVllmCatalogModel();
+    if (!model?.id) {
+        return;
+    }
+    if (elements.llmPreset) {
+        elements.llmPreset.value = 'vllm';
+    }
+    if (elements.llmProvider) {
+        elements.llmProvider.value = 'vllm';
+        lastLlmProviderValue = 'vllm';
+    }
+    if (elements.llmBaseUrl) {
+        elements.llmBaseUrl.value = getProviderDefaultBaseUrl('vllm');
+    }
+    if (elements.llmModel) {
+        elements.llmModel.value = model.id;
+    }
+    fillLlmModelPresetOptions('vllm', model.id);
+    syncLlmPresetHelp('vllm');
+    syncLlmSetupHelp();
+    syncLlmKeyState();
+    renderLlmCapabilityState();
+    renderLlmHealthState(null);
+    renderVllmModelCatalogStatus({
+        sources: [],
+        errors: []
+    });
+    if (elements.vllmModelCatalogStatus) {
+        elements.vllmModelCatalogStatus.textContent =
+            `已选择 ${model.id}。可以直接点击“自动配置并部署”，AILIS 会先诊断环境，再自动安装/配置 vLLM 并启动服务。`;
+    }
+    syncSaveButton();
+}
+
+function renderVllmRuntimeStatus(runtime = {}) {
+    if (!elements.vllmRuntimeStatus) {
+        return;
+    }
+    const status = runtime?.status || 'idle';
+    const diagnosis = runtime?.diagnosis || null;
+    const plan = runtime?.installPlan || diagnosis?.installPlan || null;
+    const steps = plan?.steps || [];
+    const service = diagnosis?.service;
+    const runtimeInfo = diagnosis?.runtime;
+    const wsl = diagnosis?.wsl;
+    const summary = [];
+
+    if (status === 'running') {
+        summary.push('vLLM 正在自动配置/部署');
+    } else if (status === 'ready') {
+        summary.push('vLLM 已就绪');
+    } else if (status === 'failed') {
+        summary.push(`vLLM 部署失败：${runtime.failure?.message || runtime.failure?.code || 'unknown'}`);
+    } else if (status === 'cancelled') {
+        summary.push('vLLM 部署已取消');
+    } else if (diagnosis) {
+        summary.push(diagnosis.ok ? 'vLLM 环境已具备基础条件' : 'vLLM 环境需要配置');
+    } else {
+        summary.push('vLLM 本地运行时尚未诊断');
+    }
+
+    if (service?.ok) {
+        summary.push(`服务已响应：${service.baseUrl}${service.modelIds?.length ? ` (${service.modelIds.join(', ')})` : ''}`);
+    } else if (service?.baseUrl) {
+        summary.push(`服务未就绪：${service.baseUrl}`);
+    }
+    if (wsl?.required) {
+        summary.push(wsl.available ? `WSL：${wsl.distros?.join(', ') || '未发现发行版'}` : 'WSL：未就绪');
+    }
+    if (runtimeInfo?.available) {
+        summary.push(runtimeInfo.pythonOk ? `Python：${runtimeInfo.pythonVersion || 'OK'}` : 'Python：未就绪');
+        summary.push(runtimeInfo.vllmInstalled ? 'vLLM：已安装' : 'vLLM：未安装');
+        summary.push(runtimeInfo.gpuInfo ? `GPU：${runtimeInfo.gpuInfo}` : 'GPU：未检测到 NVIDIA/CUDA');
+    }
+    if (steps.length) {
+        summary.push(`计划：${steps.map((step) => step.title).join('；')}`);
+    }
+    elements.vllmRuntimeStatus.textContent = summary.join(' | ');
+
+    if (elements.vllmRuntimeLog) {
+        elements.vllmRuntimeLog.textContent = (runtime?.logLines || []).slice(-28).join('\n');
+    }
+    if (elements.vllmRuntimeDeployBtn) {
+        elements.vllmRuntimeDeployBtn.disabled = status === 'running';
+        elements.vllmRuntimeDeployBtn.textContent = status === 'running' ? '部署中...' : '自动配置并部署';
+    }
+    if (elements.vllmRuntimeCancelBtn) {
+        elements.vllmRuntimeCancelBtn.disabled = status !== 'running';
+    }
+}
+
+async function refreshVllmRuntimeStatus({ diagnose = false, silent = false } = {}) {
+    if (!window.ailisDesktop?.vllmRuntime) {
+        return null;
+    }
+    if (!silent) {
+        setStatus(diagnose ? '正在诊断 vLLM 本地运行时...' : '正在读取 vLLM 部署状态...');
+    }
+    try {
+        const result = diagnose
+            ? await window.ailisDesktop.vllmRuntime.diagnose({ host: '127.0.0.1', port: 8000 })
+            : await window.ailisDesktop.vllmRuntime.getStatus();
+        const runtime = diagnose
+            ? {
+                ...(panelState?.vllmRuntime || {}),
+                diagnosis: result,
+                installPlan: result.installPlan,
+                baseUrl: result.service?.baseUrl || getProviderDefaultBaseUrl('vllm'),
+                status: result.service?.ok ? 'ready' : (panelState?.vllmRuntime?.status || 'idle')
+            }
+            : result;
+        panelState = {
+            ...(panelState || {}),
+            vllmRuntime: runtime
+        };
+        renderVllmRuntimeStatus(runtime);
+        if (!silent) {
+            setStatus(diagnose ? 'vLLM 本地运行时诊断完成。' : 'vLLM 部署状态已更新。');
+        }
+        return runtime;
+    } catch (error) {
+        if (elements.vllmRuntimeStatus) {
+            elements.vllmRuntimeStatus.textContent = `vLLM 诊断失败：${error.message || error}`;
+        }
+        if (!silent) {
+            setStatus(`vLLM 诊断失败：${error.message || error}`);
+        }
+        return null;
+    }
+}
+
+function scheduleVllmRuntimePolling() {
+    if (vllmRuntimePollTimer) {
+        clearTimeout(vllmRuntimePollTimer);
+    }
+    vllmRuntimePollTimer = setTimeout(async () => {
+        vllmRuntimePollTimer = null;
+        const runtime = await refreshVllmRuntimeStatus({ silent: true });
+        if (runtime?.status === 'running') {
+            scheduleVllmRuntimePolling();
+        } else if (runtime?.status === 'ready') {
+            await persistReadyVllmSettings(runtime);
+        }
+    }, 2500);
+}
+
+async function persistReadyVllmSettings(runtime = {}) {
+    const modelId = runtime.servedModelId || runtime.modelId || elements.llmModel?.value?.trim() || '';
+    const baseUrl = runtime.baseUrl || getProviderDefaultBaseUrl('vllm');
+    if (!modelId || !window.ailisDesktop?.savePreferences) {
+        return;
+    }
+    elements.llmPreset.value = 'vllm';
+    elements.llmProvider.value = 'vllm';
+    elements.llmBaseUrl.value = baseUrl;
+    elements.llmModel.value = modelId;
+    fillLlmModelPresetOptions('vllm', modelId);
+    try {
+        const partial = {
+            llmProvider: 'vllm',
+            llmBaseUrl: baseUrl,
+            llmModel: modelId
+        };
+        const saved = await window.ailisDesktop.savePreferences(partial);
+        currentPreferences = normalizePreferences({
+            ...(currentPreferences || saved || {}),
+            ...partial
+        });
+        syncSaveButton();
+        setStatus(`vLLM 已部署并切换为当前模型：${modelId}`);
+    } catch (error) {
+        setStatus(`vLLM 已就绪，但写入模型配置失败：${error.message || error}`);
+    }
+}
+
+async function deploySelectedVllmModel() {
+    if (!window.ailisDesktop?.vllmRuntime?.deploy) {
+        setStatus('当前环境不支持 vLLM 自动部署。');
+        return;
+    }
+    applySelectedVllmCatalogModel();
+    const model = getSelectedVllmCatalogModel();
+    const modelId = model?.id || elements.llmModel?.value?.trim();
+    if (!modelId) {
+        setStatus('请先选择或填写一个 vLLM 模型 ID。');
+        return;
+    }
+    const diagnosisRuntime = await refreshVllmRuntimeStatus({ diagnose: true, silent: true });
+    const steps = diagnosisRuntime?.installPlan?.steps || diagnosisRuntime?.diagnosis?.installPlan?.steps || [];
+    if (steps.length) {
+        const confirmed = window.confirm(
+            `AILIS 将自动配置 vLLM 环境并部署 ${modelId}。\n\n` +
+            `可能包含：${steps.map((step) => step.title).join('；')}。\n\n` +
+            '这可能需要较长时间、较大下载量和 GPU/WSL 环境。继续吗？'
+        );
+        if (!confirmed) {
+            return;
+        }
+    }
+    setStatus(`正在自动配置并部署 vLLM：${modelId}`);
+    try {
+        const runtime = await window.ailisDesktop.vllmRuntime.deploy({
+            source: model?.source || elements.vllmModelSource?.value || 'modelscope',
+            modelId,
+            host: '127.0.0.1',
+            port: 8000,
+            installWsl: true,
+            readyTimeoutSec: 1200
+        });
+        panelState = {
+            ...(panelState || {}),
+            vllmRuntime: runtime
+        };
+        renderVllmRuntimeStatus(runtime);
+        if (runtime.status === 'running') {
+            scheduleVllmRuntimePolling();
+        } else if (runtime.status === 'ready') {
+            await persistReadyVllmSettings(runtime);
+        } else if (!runtime.ok) {
+            setStatus(`vLLM 自动部署未完成：${runtime.failure?.message || runtime.error || runtime.status}`);
+        }
+    } catch (error) {
+        setStatus(`vLLM 自动部署失败：${error.message || error}`);
+    }
+}
+
+async function cancelVllmDeployment() {
+    if (!window.ailisDesktop?.vllmRuntime?.cancel) {
+        return;
+    }
+    const runtime = await window.ailisDesktop.vllmRuntime.cancel();
+    panelState = {
+        ...(panelState || {}),
+        vllmRuntime: runtime
+    };
+    renderVllmRuntimeStatus(runtime);
+    setStatus('已请求取消 vLLM 自动部署。');
 }
 
 function syncLlmPresetSelectionFromFields() {
@@ -1068,6 +1867,8 @@ function syncLlmPresetSelectionFromFields() {
     elements.llmPreset.value = match.preset.id;
     fillLlmModelPresetOptions(match.preset.id, match.model);
     syncLlmPresetHelp(match.preset.id);
+    syncLlmSetupHelp();
+    syncVllmModelCatalogPanel({ maybeRefresh: true });
 }
 
 function applyLlmPreset(presetId, { preserveModel = false } = {}) {
@@ -1086,6 +1887,9 @@ function applyLlmPreset(presetId, { preserveModel = false } = {}) {
     lastLlmProviderValue = preset.provider;
     fillLlmModelPresetOptions(preset.id, elements.llmModel.value);
     syncLlmPresetHelp(preset.id);
+    syncLlmSetupHelp();
+    syncVllmModelCatalogPanel({ maybeRefresh: preset.id === 'vllm' });
+    syncLlmKeyState();
     renderLlmCapabilityState();
     renderLlmHealthState(null);
 }
@@ -1105,7 +1909,7 @@ function applyLlmProviderDefaultsIfNeeded(previousProvider, nextProvider) {
 }
 
 async function runLlmHealthCheck() {
-    if (!window.aigrilDesktop?.llm?.healthCheck) {
+    if (!window.ailisDesktop?.llm?.healthCheck) {
         renderLlmHealthState({
             ok: false,
             checks: {},
@@ -1114,7 +1918,9 @@ async function runLlmHealthCheck() {
         return;
     }
     elements.llmHealthCheckBtn.disabled = true;
-    elements.llmHealthState.textContent = '正在测试模型连接、JSON、Tool 和 Vision 能力...';
+    elements.llmHealthState.textContent = isLocalLlmProvider()
+        ? '正在测试本地模型连接和 JSON 输出能力...'
+        : '正在测试模型连接、JSON、Tool 和 Vision 能力...';
     try {
         const settings = {
             provider: elements.llmProvider.value,
@@ -1124,7 +1930,7 @@ async function runLlmHealthCheck() {
             temperature: Number(elements.llmTemperature.value),
             timeoutMs: Number(elements.llmTimeout.value)
         };
-        const result = await window.aigrilDesktop.llm.healthCheck({
+        const result = await window.ailisDesktop.llm.healthCheck({
             settings,
             includeToolCall: true,
             includeVision: true,
@@ -1192,6 +1998,7 @@ function fillForm(preferences) {
     elements.petScale.value = normalized.petScale;
     elements.petShowTaskbar.checked = !normalized.petSkipTaskbar;
     elements.speechMode.value = normalized.speechMode;
+    elements.chunkedTtsEnabled.checked = normalized.chunkedTtsEnabled;
     elements.recognitionMode.value = normalized.recognitionMode;
     if (elements.conversationMode) {
         elements.conversationMode.value = normalized.conversationMode;
@@ -1200,13 +2007,13 @@ function fillForm(preferences) {
         elements.recognitionModeText.textContent = recognitionModeLabels[normalized.recognitionMode] ||
             normalized.recognitionMode;
     }
-    if (elements.humanClawStateDir) {
-        elements.humanClawStateDir.value = normalized.humanClawStateDir;
+    if (elements.ailisStateDir) {
+        elements.ailisStateDir.value = normalized.ailisStateDir;
     }
-    if (elements.humanClawStateDirHelp) {
-        elements.humanClawStateDirHelp.textContent = normalized.humanClawStateDir
-            ? `当前解析目录：${normalized.humanClawResolvedStateDir || normalized.humanClawStateDir}`
-            : `默认目录：${normalized.humanClawDefaultStateDir || '软件根目录下的 .humanclaw-state'}`;
+    if (elements.ailisStateDirHelp) {
+        elements.ailisStateDirHelp.textContent = normalized.ailisStateDir
+            ? `当前解析目录：${normalized.ailisResolvedStateDir || normalized.ailisStateDir}`
+            : `默认目录：${normalized.ailisDefaultStateDir || '软件根目录下的 .ailis-state'}`;
     }
     elements.llmProvider.value = normalized.llmProvider;
     lastLlmProviderValue = normalized.llmProvider;
@@ -1219,11 +2026,17 @@ function fillForm(preferences) {
     renderLlmCapabilityState(normalized.llmCapabilities);
     renderLlmHealthState(null);
     elements.elevenLabsApiBase.value = normalized.elevenLabsApiBase;
-    elements.elevenLabsVoiceId.value = normalized.elevenLabsVoiceId;
     elements.elevenLabsApiKey.value = '';
-    elements.elevenLabsModelId.value = normalized.elevenLabsModelId;
-    elements.elevenLabsOutputFormat.value = normalized.elevenLabsOutputFormat;
     elements.elevenLabsTimeout.value = String(normalized.elevenLabsTimeoutMs);
+    draftElevenLabsVoiceProfiles = normalizeElevenLabsVoiceProfiles(
+        normalized.elevenLabsVoiceProfiles,
+        normalized
+    );
+    draftElevenLabsActiveLanguageCode = normalizeElevenLabsLanguageCode(normalized.elevenLabsLanguageCode, 'zh');
+    writeElevenLabsProfileToFields(
+        draftElevenLabsVoiceProfiles[draftElevenLabsActiveLanguageCode],
+        draftElevenLabsActiveLanguageCode
+    );
     elements.computerControlEnabled.checked = normalized.computerControlEnabled;
     for (const [providerId, entry] of Object.entries(emailElements)) {
         const profile = normalized.emailProfiles?.[providerId] || {};
@@ -1272,7 +2085,7 @@ function fillForm(preferences) {
     syncSaveButton();
 }
 
-function renderHumanClawStatus(status = {}) {
+function renderAILISStatus(status = {}) {
     if (!elements.openclawStatusText || !elements.openclawRuntimeText) {
         return;
     }
@@ -1293,11 +2106,11 @@ function renderHumanClawStatus(status = {}) {
     const toolValidation = resolvedStatus.toolSurfaceValidation || {};
 
     if (humanGateway.running) {
-        elements.openclawStatusText.textContent = `HumanClaw Gateway 已运行（${humanGateway.url || `:${humanGateway.port || ''}`}）`;
+        elements.openclawStatusText.textContent = `AILIS Gateway 已运行（${humanGateway.url || `:${humanGateway.port || ''}`}）`;
     } else if (resolvedStatus.lastError) {
         elements.openclawStatusText.textContent = resolvedStatus.lastError;
     } else {
-        elements.openclawStatusText.textContent = 'HumanClaw Gateway 尚未启动。';
+        elements.openclawStatusText.textContent = 'AILIS Gateway 尚未启动。';
     }
 
     const statusBits = [
@@ -1330,16 +2143,16 @@ async function refreshOpenClawStatus() {
         return;
     }
 
-    if (!window.aigrilDesktop?.gateway?.getStatus) {
-        elements.openclawStatusText.textContent = '当前环境不支持 HumanClaw Gateway。';
+    if (!window.ailisDesktop?.gateway?.getStatus) {
+        elements.openclawStatusText.textContent = '当前环境不支持 AILIS Gateway。';
         elements.openclawRuntimeText.textContent = '';
         return;
     }
 
     try {
-        renderHumanClawStatus(await window.aigrilDesktop.gateway.getStatus());
+        renderAILISStatus(await window.ailisDesktop.gateway.getStatus());
     } catch (error) {
-        elements.openclawStatusText.textContent = `读取 HumanClaw 状态失败：${error.message || error}`;
+        elements.openclawStatusText.textContent = `读取 AILIS 状态失败：${error.message || error}`;
         elements.openclawRuntimeText.textContent = '';
     }
 }
@@ -1412,18 +2225,158 @@ function renderMemorySnapshot(snapshot = {}) {
 }
 
 async function refreshMemoryStatus() {
-    if (!window.aigrilDesktop?.memory?.getSnapshot) {
+    if (!window.ailisDesktop?.memory?.getSnapshot) {
         if (elements.memoryStatusText) {
             elements.memoryStatusText.textContent = '当前环境不支持人格记忆。';
         }
         return;
     }
     try {
-        renderMemorySnapshot(await window.aigrilDesktop.memory.getSnapshot({ includeEvents: false }));
+        renderMemorySnapshot(await window.ailisDesktop.memory.getSnapshot({ includeEvents: false }));
     } catch (error) {
         if (elements.memoryStatusText) {
             elements.memoryStatusText.textContent = `读取人格记忆失败：${error.message || error}`;
         }
+    }
+}
+
+function compactPath(value = '') {
+    const text = String(value || '').trim();
+    if (!text || text.length <= 72) {
+        return text;
+    }
+    return `...${text.slice(-69)}`;
+}
+
+function renderVoiceRuntimeStatus(runtime = {}) {
+    if (!elements.voiceRuntimeStatus || !elements.voiceRuntimePlan) {
+        return;
+    }
+
+    if (!runtime || runtime.status === 'not_diagnosed') {
+        elements.voiceRuntimeStatus.textContent = '本地语音运行时尚未诊断。';
+        elements.voiceRuntimePlan.textContent = '';
+        if (elements.voiceRuntimeBootstrapBtn) {
+            elements.voiceRuntimeBootstrapBtn.disabled = true;
+        }
+        return;
+    }
+
+    const cosyReady = runtime.cosyVoice3?.ok ? 'CosyVoice3 就绪' : 'CosyVoice3 未就绪';
+    const asrReady = runtime.asr?.ok ? 'ASR 就绪' : 'ASR 未就绪';
+    const backend = runtime.cosyVoice3?.acceleration?.backend || '未知后端';
+    const python = runtime.preferredPython
+        ? `Python: ${compactPath(runtime.preferredPython)}`
+        : 'Python: 未就绪';
+    elements.voiceRuntimeStatus.textContent = [
+        runtime.ok ? '运行时已就绪' : '运行时需要修复',
+        cosyReady,
+        asrReady,
+        backend,
+        python
+    ].join(' | ');
+
+    const steps = runtime.installPlan?.steps || [];
+    elements.voiceRuntimePlan.textContent = steps.length
+        ? `待修复 ${steps.length} 项：${steps.map((step) => step.title).join('；')}`
+        : '没有待处理安装项。';
+
+    const bootstrapStatus = runtime.bootstrap?.status || '';
+    if (elements.voiceRuntimeBootstrapBtn) {
+        elements.voiceRuntimeBootstrapBtn.disabled = !steps.length || bootstrapStatus === 'running';
+        elements.voiceRuntimeBootstrapBtn.textContent = bootstrapStatus === 'running'
+            ? '修复中...'
+            : '一键修复';
+    }
+}
+
+async function refreshVoiceRuntimeStatus({ diagnose = false, silent = false } = {}) {
+    if (!window.ailisDesktop?.voiceRuntime) {
+        return;
+    }
+    if (!silent) {
+        setStatus(diagnose ? '正在诊断本地语音运行时...' : '正在读取本地语音运行时状态...');
+    }
+    try {
+        if (!diagnose) {
+            const status = await window.ailisDesktop.voiceRuntime.getStatus?.();
+            const summary = {
+                ...(panelState?.voiceRuntime || {}),
+                bootstrap: status || panelState?.voiceRuntime?.bootstrap
+            };
+            panelState = {
+                ...(panelState || {}),
+                voiceRuntime: summary
+            };
+            renderVoiceRuntimeStatus(summary);
+            return;
+        }
+
+        const result = await window.ailisDesktop.voiceRuntime.diagnose();
+        const bootstrap = await window.ailisDesktop.voiceRuntime.getStatus?.();
+        const summary = {
+            ok: result.ok,
+            status: result.ok ? 'ready' : 'needs_setup',
+            platform: result.platform,
+            cosyVoice3: result.cosyVoice3,
+            asr: result.asr,
+            preferredPython: result.selectedPython?.command || '',
+            installStepCount: result.installPlan?.steps?.length || 0,
+            installPlan: result.installPlan,
+            bootstrap
+        };
+        panelState = {
+            ...(panelState || {}),
+            voiceRuntime: summary
+        };
+        renderVoiceRuntimeStatus(summary);
+        if (!silent) {
+            setStatus('本地语音运行时状态已更新。');
+        }
+    } catch (error) {
+        elements.voiceRuntimeStatus.textContent = `诊断失败：${error.message || error}`;
+        if (!silent) {
+            setStatus(`诊断本地语音运行时失败：${error.message || error}`);
+        }
+    }
+}
+
+async function bootstrapVoiceRuntime() {
+    if (!window.ailisDesktop?.voiceRuntime?.bootstrap) {
+        setStatus('当前环境不支持本地语音运行时自动修复。');
+        return;
+    }
+    const runtime = panelState?.voiceRuntime || {};
+    const steps = runtime.installPlan?.steps || [];
+    const needsNetwork = steps.some((step) => step.requiresNetwork);
+    if (needsNetwork) {
+        const confirmed = window.confirm(
+            '本地语音运行时修复需要联网下载 Python、依赖或模型，体积可能较大。继续吗？'
+        );
+        if (!confirmed) {
+            return;
+        }
+    }
+
+    elements.voiceRuntimeBootstrapBtn.disabled = true;
+    elements.voiceRuntimeBootstrapBtn.textContent = '修复中...';
+    setStatus('正在自动修复本地语音运行时，这可能需要一些时间...');
+
+    try {
+        const result = await window.ailisDesktop.voiceRuntime.bootstrap({
+            allowNetwork: true
+        });
+        if (!result.ok) {
+            const failedStep = (result.steps || []).find((step) => step.status === 'failed');
+            setStatus(`本地语音运行时修复未完成：${failedStep?.error || result.error || result.status}`);
+        } else {
+            setStatus('本地语音运行时修复完成。');
+        }
+        await refreshVoiceRuntimeStatus({ diagnose: true, silent: true });
+    } catch (error) {
+        setStatus(`本地语音运行时修复失败：${error.message || error}`);
+    } finally {
+        elements.voiceRuntimeBootstrapBtn.textContent = '一键修复';
     }
 }
 
@@ -1733,7 +2686,7 @@ function renderAgentLabAnalysis(analysis) {
 
 async function loadAgentLabAnalysis(runId, { silent = false } = {}) {
     const id = String(runId || '').trim();
-    if (!id || !window.aigrilDesktop?.agentLab?.getRunAnalysis) {
+    if (!id || !window.ailisDesktop?.agentLab?.getRunAnalysis) {
         if (!silent) {
             setAgentLabStatus('当前环境不支持 Agent Lab。');
         }
@@ -1745,7 +2698,7 @@ async function loadAgentLabAnalysis(runId, { silent = false } = {}) {
         setAgentLabStatus('正在读取分析...');
     }
     try {
-        const analysis = await window.aigrilDesktop.agentLab.getRunAnalysis({
+        const analysis = await window.ailisDesktop.agentLab.getRunAnalysis({
             runId: id,
             transcriptLimit: 2500
         });
@@ -1763,7 +2716,7 @@ async function loadAgentLabAnalysis(runId, { silent = false } = {}) {
 }
 
 async function refreshAgentLabRuns({ selectLatest = false, silent = false } = {}) {
-    if (!window.aigrilDesktop?.agentLab?.listRuns) {
+    if (!window.ailisDesktop?.agentLab?.listRuns) {
         setAgentLabStatus('当前环境不支持 Agent Lab。');
         renderAgentLabAnalysis(null);
         return;
@@ -1772,7 +2725,7 @@ async function refreshAgentLabRuns({ selectLatest = false, silent = false } = {}
         setAgentLabStatus('正在刷新...');
     }
     try {
-        const result = await window.aigrilDesktop.agentLab.listRuns({ limit: 40 });
+        const result = await window.ailisDesktop.agentLab.listRuns({ limit: 40 });
         agentLabRuns = Array.isArray(result?.runs) ? result.runs : [];
         const nextRunId = selectLatest
             ? agentLabRuns[0]?.runId
@@ -1799,7 +2752,7 @@ function syncAgentLabRunButton() {
 }
 
 async function runAgentLabTask() {
-    if (!window.aigrilDesktop?.agentLab?.runTask) {
+    if (!window.ailisDesktop?.agentLab?.runTask) {
         setAgentLabStatus('当前环境不支持 Agent Lab。');
         return;
     }
@@ -1820,7 +2773,7 @@ async function runAgentLabTask() {
     setAgentLabStatus('正在运行 Agent Loop...');
 
     try {
-        const result = await window.aigrilDesktop.agentLab.runTask({
+        const result = await window.ailisDesktop.agentLab.runTask({
             message,
             sessionId,
             agentLoop: 'llm',
@@ -1879,15 +2832,39 @@ function scheduleAgentLabAnalysisRefresh(runId) {
 }
 
 async function resetAffinityScore() {
-    if (!window.aigrilDesktop?.memory?.resetAffinity) {
+    if (!window.ailisDesktop?.memory?.resetAffinity) {
         return;
     }
     try {
-        await window.aigrilDesktop.memory.resetAffinity({ score: 50 });
+        await window.ailisDesktop.memory.resetAffinity({ score: 50 });
         await refreshMemoryStatus();
         setStatus('好感度已重置为 50。');
     } catch (error) {
         setStatus(`重置好感度失败：${error.message || error}`);
+    }
+}
+
+async function clearMemoryStore() {
+    if (!window.ailisDesktop?.memory?.clear) {
+        setStatus('当前环境不支持清空人格记忆。');
+        return;
+    }
+    const confirmed = window.confirm(
+        '确认清空 AILIS 长期记忆吗？\n\n将重置记忆块、近期事件、daily notes、反思记录和好感度；已保存的密钥条目会保留。'
+    );
+    if (!confirmed) {
+        return;
+    }
+    try {
+        const result = await window.ailisDesktop.memory.clear({ preserveSecrets: true });
+        if (!result?.ok) {
+            setStatus(`清空记忆失败：${result?.status || 'unknown_error'}`);
+            return;
+        }
+        await refreshMemoryStatus();
+        setStatus('长期记忆已清空，密钥条目已保留。');
+    } catch (error) {
+        setStatus(`清空记忆失败：${error.message || error}`);
     }
 }
 
@@ -1960,7 +2937,7 @@ async function refreshMicrophones({ requestPermission = false } = {}) {
 }
 
 async function savePreferences() {
-    if (!window.aigrilDesktop?.savePreferences) {
+    if (!window.ailisDesktop?.savePreferences) {
         setStatus('当前环境不支持保存桌面配置。');
         return;
     }
@@ -1970,7 +2947,7 @@ async function savePreferences() {
     setStatus('正在保存设置...');
 
     try {
-        const savedPreferences = await window.aigrilDesktop.savePreferences(
+        const savedPreferences = await window.ailisDesktop.savePreferences(
             readFormPreferences({ includeSecret: true })
         );
         pendingClearLlmKey = false;
@@ -1987,7 +2964,7 @@ async function savePreferences() {
 }
 
 async function restoreDefaults() {
-    if (!window.aigrilDesktop?.restoreDefaultPreferences) {
+    if (!window.ailisDesktop?.restoreDefaultPreferences) {
         setStatus('当前环境不支持恢复默认配置。');
         return;
     }
@@ -2002,7 +2979,7 @@ async function restoreDefaults() {
     setStatus('正在恢复默认设置...');
 
     try {
-        const restoredPreferences = await window.aigrilDesktop.restoreDefaultPreferences();
+        const restoredPreferences = await window.ailisDesktop.restoreDefaultPreferences();
         pendingClearLlmKey = false;
         pendingClearElevenLabsKey = false;
         fillForm(restoredPreferences);
@@ -2017,15 +2994,15 @@ async function restoreDefaults() {
 }
 
 async function initialize() {
-    if (!window.aigrilDesktop?.getControlPanelState) {
-        setStatus('当前页面只能在 AIGril 桌面版里使用。');
+    if (!window.ailisDesktop?.getControlPanelState) {
+        setStatus('当前页面只能在 AILIS 桌面版里使用。');
         return;
     }
 
     setStatus('正在读取当前配置...');
 
     try {
-        panelState = await window.aigrilDesktop.getControlPanelState();
+        panelState = await window.ailisDesktop.getControlPanelState();
         llmProviderDefaultBaseUrls = {
             ...fallbackLlmProviderDefaultBaseUrls,
             ...(panelState.options?.llmProviderDefaultBaseUrls || {})
@@ -2036,13 +3013,15 @@ async function initialize() {
         };
         fillScaleOptions(panelState.options?.petScaleOptions || []);
         fillSpeechModeOptions(panelState.options?.speechModeOptions || []);
-        fillRecognitionModeOptions(panelState.options?.recognitionModeOptions || ['auto-vad', 'continuous', 'manual']);
+        fillRecognitionModeOptions(panelState.options?.recognitionModeOptions || ['fast-vad', 'auto-vad', 'continuous', 'manual']);
         fillConversationModeOptions(panelState.options?.conversationModeOptions || ['assistant', 'daily']);
         fillLlmProviderOptions(panelState.options?.llmProviderOptions || ['openai-compatible']);
         fillLlmPresetOptions();
         fillRenderProfileOptions(panelState.options?.renderProfileOptions || Object.keys(renderProfileLabels));
         fillForm(panelState.preferences || {});
-        renderHumanClawStatus(panelState.assistant?.humanGateway || panelState.assistant || {});
+        renderAILISStatus(panelState.assistant?.humanGateway || panelState.assistant || {});
+        renderVoiceRuntimeStatus(panelState.voiceRuntime || {});
+        renderVllmRuntimeStatus(panelState.vllmRuntime || {});
 
         elements.appVersion.textContent = `v${panelState.environment?.version || '1.0.0'}`;
         if (elements.userDataPath) {
@@ -2062,6 +3041,8 @@ async function initialize() {
         await refreshMicrophones();
         await refreshOpenClawStatus();
         await refreshMemoryStatus();
+        void refreshVoiceRuntimeStatus({ diagnose: true, silent: true });
+        void refreshVllmRuntimeStatus({ diagnose: true, silent: true });
         setStatus('配置已就绪。修改后点击右下角保存。');
     } catch (error) {
         setStatus(`读取配置失败：${error.message || error}`);
@@ -2166,12 +3147,20 @@ function endDialoguePreviewDrag(event) {
     elements.llmProvider,
     elements.llmTemperature,
     elements.llmTimeout,
-    elements.humanClawStateDir,
+    elements.ailisStateDir,
     elements.elevenLabsApiBase,
     elements.elevenLabsVoiceId,
+    elements.elevenLabsLanguageCode,
     elements.elevenLabsModelId,
     elements.elevenLabsOutputFormat,
     elements.elevenLabsTimeout,
+    elements.elevenLabsOptimizeLatency,
+    elements.elevenLabsSpeakerBoost,
+    elements.elevenLabsSpeed,
+    elements.elevenLabsStability,
+    elements.elevenLabsSimilarity,
+    elements.elevenLabsStyle,
+    elements.chunkedTtsEnabled,
     elements.computerControlEnabled,
     elements.conversationMode,
     elements.emailQqAccount,
@@ -2234,6 +3223,7 @@ elements.llmApiKey.addEventListener('input', () => {
 
 elements.llmPreset?.addEventListener('change', () => {
     applyLlmPreset(elements.llmPreset.value);
+    syncVllmModelCatalogPanel({ maybeRefresh: elements.llmPreset.value === 'vllm' });
     updateRangeLabels();
     syncSaveButton();
 });
@@ -2247,13 +3237,48 @@ elements.llmModelPreset?.addEventListener('change', () => {
     syncSaveButton();
 });
 
+elements.vllmModelRefreshBtn?.addEventListener('click', () => {
+    void refreshVllmModelCatalog();
+});
+
+elements.vllmModelApplyBtn?.addEventListener('click', () => {
+    applySelectedVllmCatalogModel();
+});
+
+elements.vllmRuntimeDiagnoseBtn?.addEventListener('click', () => {
+    void refreshVllmRuntimeStatus({ diagnose: true });
+});
+
+elements.vllmRuntimeDeployBtn?.addEventListener('click', () => {
+    void deploySelectedVllmModel();
+});
+
+elements.vllmRuntimeCancelBtn?.addEventListener('click', () => {
+    void cancelVllmDeployment();
+});
+
+elements.vllmModelSource?.addEventListener('change', () => {
+    if (isVllmModelCatalogVisible()) {
+        void refreshVllmModelCatalog();
+    }
+});
+
+elements.vllmModelQuery?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        void refreshVllmModelCatalog();
+    }
+});
+
 elements.llmProvider?.addEventListener('change', () => {
     const nextProvider = elements.llmProvider.value;
     applyLlmProviderDefaultsIfNeeded(lastLlmProviderValue, nextProvider);
     lastLlmProviderValue = nextProvider;
     syncLlmPresetSelectionFromFields();
+    syncLlmKeyState();
     renderLlmCapabilityState();
     renderLlmHealthState(null);
+    syncVllmModelCatalogPanel({ maybeRefresh: nextProvider === 'vllm' });
     updateRangeLabels();
     syncSaveButton();
 });
@@ -2279,6 +3304,11 @@ elements.elevenLabsApiKey.addEventListener('input', () => {
         pendingClearElevenLabsKey = false;
     }
     syncElevenLabsKeyState();
+    syncSaveButton();
+});
+
+elements.elevenLabsLanguageCode?.addEventListener('change', () => {
+    switchElevenLabsVoiceProfile(elements.elevenLabsLanguageCode.value);
     syncSaveButton();
 });
 
@@ -2314,19 +3344,19 @@ elements.clearElevenLabsKeyBtn.addEventListener('click', () => {
     syncSaveButton();
 });
 
-elements.chooseHumanClawStateDirBtn?.addEventListener('click', async () => {
-    if (!window.aigrilDesktop?.chooseHumanClawStateDir) {
+elements.chooseAILISStateDirBtn?.addEventListener('click', async () => {
+    if (!window.ailisDesktop?.chooseAILISStateDir) {
         setStatus('当前环境不支持选择目录。');
         return;
     }
     try {
-        const result = await window.aigrilDesktop.chooseHumanClawStateDir();
+        const result = await window.ailisDesktop.chooseAILISStateDir();
         if (!result?.ok || !result.path) {
             return;
         }
-        elements.humanClawStateDir.value = result.path;
-        if (elements.humanClawStateDirHelp) {
-            elements.humanClawStateDirHelp.textContent = `保存后使用：${result.path}`;
+        elements.ailisStateDir.value = result.path;
+        if (elements.ailisStateDirHelp) {
+            elements.ailisStateDirHelp.textContent = `保存后使用：${result.path}`;
         }
         syncSaveButton();
     } catch (error) {
@@ -2334,11 +3364,11 @@ elements.chooseHumanClawStateDirBtn?.addEventListener('click', async () => {
     }
 });
 
-elements.resetHumanClawStateDirBtn?.addEventListener('click', () => {
-    elements.humanClawStateDir.value = '';
-    if (elements.humanClawStateDirHelp) {
-        elements.humanClawStateDirHelp.textContent =
-            `保存后使用默认目录：${currentPreferences?.humanClawDefaultStateDir || '软件根目录下的 .humanclaw-state'}`;
+elements.resetAILISStateDirBtn?.addEventListener('click', () => {
+    elements.ailisStateDir.value = '';
+    if (elements.ailisStateDirHelp) {
+        elements.ailisStateDirHelp.textContent =
+            `保存后使用默认目录：${currentPreferences?.ailisDefaultStateDir || '软件根目录下的 .ailis-state'}`;
     }
     syncSaveButton();
 });
@@ -2355,6 +3385,14 @@ elements.refreshMicsBtn.addEventListener('click', () => {
     void refreshMicrophones({ requestPermission: true });
 });
 
+elements.voiceRuntimeDiagnoseBtn?.addEventListener('click', () => {
+    void refreshVoiceRuntimeStatus({ diagnose: true });
+});
+
+elements.voiceRuntimeBootstrapBtn?.addEventListener('click', () => {
+    void bootstrapVoiceRuntime();
+});
+
 elements.refreshMemoryBtn?.addEventListener('click', () => {
     void refreshMemoryStatus();
 });
@@ -2363,15 +3401,19 @@ elements.resetAffinityBtn?.addEventListener('click', () => {
     void resetAffinityScore();
 });
 
+elements.clearMemoryBtn?.addEventListener('click', () => {
+    void clearMemoryStore();
+});
+
 elements.openAgentLabBtn?.addEventListener('click', () => {
-    void window.aigrilDesktop?.showAgentLab?.();
+    void window.ailisDesktop?.showAgentLab?.();
 });
 
 elements.closeBtn.addEventListener('click', () => {
-    void window.aigrilDesktop?.closeCurrentWindow?.();
+    void window.ailisDesktop?.closeCurrentWindow?.();
 });
 
-window.aigrilDesktop?.onPreferencesUpdated?.(({ preferences = {} } = {}) => {
+window.ailisDesktop?.onPreferencesUpdated?.(({ preferences = {} } = {}) => {
     if (saveInFlight) {
         return;
     }
@@ -2387,7 +3429,7 @@ window.aigrilDesktop?.onPreferencesUpdated?.(({ preferences = {} } = {}) => {
     setStatus('已同步外部配置更新。');
 });
 
-window.aigrilDesktop?.gateway?.onEvent?.((event = {}) => {
+window.ailisDesktop?.gateway?.onEvent?.((event = {}) => {
     if (/^(gateway|agent|tool)\./.test(event.type || '')) {
         void refreshOpenClawStatus();
     }

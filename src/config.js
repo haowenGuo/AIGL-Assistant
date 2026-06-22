@@ -4,9 +4,9 @@ import { DEFAULT_RENDER_PROFILE_ID, normalizeRenderProfileId } from './character
 
 const DEFAULT_BACKEND_BASE_URL = 'https://airi-backend.onrender.com';
 const DEFAULT_DESKTOP_BACKEND_BASE_URL = '';
-const DEFAULT_BACKEND_MODE = 'humanclaw';
-const DEFAULT_SPEECH_MODE = 'server';
-const DEFAULT_DESKTOP_SPEECH_MODE = 'cosyvoice3';
+const DEFAULT_BACKEND_MODE = 'ailis';
+const DEFAULT_SPEECH_MODE = 'off';
+const DEFAULT_DESKTOP_SPEECH_MODE = 'off';
 const DEFAULT_CAMERA_DISTANCE = 1.1;
 const DEFAULT_CAMERA_HEIGHT = 1.3;
 const DEFAULT_CAMERA_TARGET_Y = 1;
@@ -40,9 +40,16 @@ function normalizeBackendMode(value) {
 
 function normalizeSpeechMode(value, fallbackValue = DEFAULT_SPEECH_MODE) {
     const normalizedValue = String(value || '').trim().toLowerCase();
-    return ['cosyvoice3', 'kokoro', 'vits', 'server', 'local', 'off', 'auto'].includes(normalizedValue)
-        ? normalizedValue
-        : fallbackValue;
+    if (['off', 'server', 'cosyvoice3'].includes(normalizedValue)) {
+        return normalizedValue;
+    }
+    if (['elevenlabs', 'eleven-labs', 'eleven_labs', 'server_tts', 'cloud'].includes(normalizedValue)) {
+        return 'server';
+    }
+    if (['cosyvoice', 'cosy-voice', 'cosy_voice'].includes(normalizedValue)) {
+        return 'cosyvoice3';
+    }
+    return ['off', 'server', 'cosyvoice3'].includes(fallbackValue) ? fallbackValue : 'off';
 }
 
 function normalizeNumber(value, minimum, maximum, fallbackValue, digits = 2) {
@@ -91,14 +98,14 @@ function getDesktopPreferencesSnapshot() {
     if (typeof window === 'undefined') {
         return {};
     }
-    return window.aigrilDesktop?.preferences || {};
+    return window.ailisDesktop?.preferences || {};
 }
 
 function getDesktopResourceUrl(relativePath) {
     if (typeof window === 'undefined') {
         return relativePath;
     }
-    const resourceUrl = window.aigrilDesktop?.resourceUrl;
+    const resourceUrl = window.ailisDesktop?.resourceUrl;
     if (typeof resourceUrl !== 'function') {
         return relativePath;
     }
@@ -129,25 +136,25 @@ function getRuntimeSettings() {
     }
 
     const desktopPreferences = getDesktopPreferencesSnapshot();
-    const isDesktopRuntime = window.aigrilDesktop?.platform === 'electron';
+    const isDesktopRuntime = window.ailisDesktop?.platform === 'electron';
     const url = new URL(window.location.href);
     const queryBackend = url.searchParams.get('backend')?.trim();
     const forceDemo = url.searchParams.get('demo') === '1';
     const querySpeechMode = url.searchParams.get('speechMode')?.trim().toLowerCase();
 
     if (queryBackend) {
-        window.localStorage.setItem('aigril_backend_base_url', queryBackend);
+        window.localStorage.setItem('ailis_backend_base_url', queryBackend);
     }
     if (querySpeechMode) {
-        window.localStorage.setItem('aigril_speech_mode', querySpeechMode);
+        window.localStorage.setItem('ailis_speech_mode', querySpeechMode);
     }
 
     const storedBackend = (
-        window.localStorage.getItem('aigril_backend_base_url') ||
+        window.localStorage.getItem('ailis_backend_base_url') ||
         window.localStorage.getItem('airi_backend_base_url')
     )?.trim();
     const storedSpeechMode = (
-        window.localStorage.getItem('aigril_speech_mode') ||
+        window.localStorage.getItem('ailis_speech_mode') ||
         desktopPreferences.speechMode ||
         DEFAULT_SPEECH_MODE
     ).trim().toLowerCase();
@@ -180,7 +187,7 @@ function getRuntimeSettings() {
 }
 
 function applyBackendUrls(baseUrl) {
-    const fallbackBackendBaseUrl = typeof window !== 'undefined' && window.aigrilDesktop?.platform === 'electron'
+    const fallbackBackendBaseUrl = typeof window !== 'undefined' && window.ailisDesktop?.platform === 'electron'
         ? DEFAULT_DESKTOP_BACKEND_BASE_URL
         : DEFAULT_BACKEND_BASE_URL;
     CONFIG.BACKEND_BASE_URL = normalizeBackendBaseUrl(baseUrl, fallbackBackendBaseUrl);
@@ -323,7 +330,7 @@ function applyAutoChatSettings(preferences = {}) {
 const runtimeSettings = getRuntimeSettings();
 
 export const CONFIG = {
-    MODEL_PATH: getDesktopResourceUrl('Resources/AiGril.vrm'),
+    MODEL_PATH: getDesktopResourceUrl('Resources/AILIS_18.vrm'),
     ANIMATION_FILES: getDesktopLoadableMotionFiles(),
     IDLE_ACTION_LIST: ['idle', 'idle1', 'idle2'],
     DANCE_ACTION_LIST: ['vrma17', 'vrma25'],
@@ -409,7 +416,7 @@ export const CONFIG = {
     ASR_CONTINUOUS_VOICE_FRAMES: 3,
     ASR_WAKE_WORD: '老婆',
     ASR_WAKE_WORD_ALIASES: ['老婆', '老 婆', '我老婆'],
-    WEB_NATIVE_TTS_FALLBACK_ENABLED: true,
+    WEB_NATIVE_TTS_FALLBACK_ENABLED: false,
     DESKTOP_NATIVE_TTS_RATE: DEFAULT_DESKTOP_NATIVE_TTS_RATE,
     DESKTOP_NATIVE_TTS_PITCH: DEFAULT_DESKTOP_NATIVE_TTS_PITCH,
     DESKTOP_NATIVE_TTS_VOLUME: DEFAULT_DESKTOP_NATIVE_TTS_VOLUME,
@@ -430,7 +437,7 @@ export function applyDesktopPreferencesToConfig(preferences = {}) {
         CONFIG.BACKEND_MODE = normalizeBackendMode(preferences.backendMode);
     }
     if ('speechMode' in preferences) {
-        const fallbackSpeechMode = typeof window !== 'undefined' && window.aigrilDesktop?.platform === 'electron'
+        const fallbackSpeechMode = typeof window !== 'undefined' && window.ailisDesktop?.platform === 'electron'
             ? DEFAULT_DESKTOP_SPEECH_MODE
             : DEFAULT_SPEECH_MODE;
         CONFIG.SPEECH_MODE = normalizeSpeechMode(preferences.speechMode, fallbackSpeechMode);

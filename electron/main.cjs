@@ -20,20 +20,17 @@ const { DesktopASRManager } = require('./local-asr-manager.cjs');
 const { synthesizeElevenLabsSpeech } = require('./desktop-elevenlabs-tts.cjs');
 const {
     closeCosyVoice3TTS,
+    configureCosyVoice3TTS,
     synthesizeCosyVoice3Speech,
     warmupCosyVoice3TTS
 } = require('./desktop-cosyvoice3-tts.cjs');
-const {
-    closeKokoroTTS,
-    synthesizeKokoroSpeech,
-    warmupKokoroTTS
-} = require('./desktop-kokoro-tts.cjs');
+const { VoiceRuntimeBootstrap } = require('./voice-runtime-bootstrap.cjs');
 const {
     OpenClawGatewayManager,
     OpenClawRuntimeSupervisor
 } = require('./openclaw-runtime.cjs');
-const { HumanClawGateway } = require('./humanclaw-gateway.cjs');
-const { createHumanClawDesktopPlatformAdapter } = require('./humanclaw-desktop-platform-adapter.cjs');
+const { AILISGateway } = require('./ailis-gateway.cjs');
+const { createAILISDesktopPlatformAdapter } = require('./ailis-desktop-platform-adapter.cjs');
 const {
     getOpenClawToolSurface,
     getOpenClawToolSurfaceSummary,
@@ -46,6 +43,8 @@ const {
     getDefaultProviderModel,
     getProviderCapabilities
 } = require('./desktop-llm-provider.cjs');
+const { searchVllmModelCatalog } = require('./vllm-model-catalog.cjs');
+const { VllmLocalDeployer } = require('./vllm-local-deployer.cjs');
 const {
     BACKEND_MODE_OPTIONS,
     DEFAULT_AUTO_CHAT_ENABLED,
@@ -74,6 +73,7 @@ const {
     DEFAULT_DESKTOP_NATIVE_TTS_PITCH,
     DEFAULT_DESKTOP_NATIVE_TTS_RATE,
     DEFAULT_DESKTOP_NATIVE_TTS_VOLUME,
+    DEFAULT_CHUNKED_TTS_ENABLED,
     DEFAULT_LLM_BASE_URL,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_PROVIDER,
@@ -83,14 +83,23 @@ const {
     LLM_PROVIDER_DEFAULT_MODELS,
     DEFAULT_ELEVENLABS_API_BASE,
     DEFAULT_ELEVENLABS_API_KEY,
+    DEFAULT_ELEVENLABS_LANGUAGE_CODE,
     DEFAULT_ELEVENLABS_MODEL_ID,
+    DEFAULT_ELEVENLABS_OPTIMIZE_STREAMING_LATENCY,
     DEFAULT_ELEVENLABS_OUTPUT_FORMAT,
+    DEFAULT_ELEVENLABS_SIMILARITY_BOOST,
+    DEFAULT_ELEVENLABS_SPEED,
+    DEFAULT_ELEVENLABS_STABILITY,
+    DEFAULT_ELEVENLABS_STYLE,
     DEFAULT_ELEVENLABS_TIMEOUT_MS,
+    DEFAULT_ELEVENLABS_USE_SPEAKER_BOOST,
     DEFAULT_ELEVENLABS_VOICE_ID,
-    DEFAULT_HUMANCLAW_STATE_DIR,
+    DEFAULT_ELEVENLABS_VOICE_PROFILES,
+    DEFAULT_AILIS_STATE_DIR,
     DEFAULT_OPENCLAW_GATEWAY_URL,
     DEFAULT_PET_SCALE,
     EMAIL_PROVIDER_OPTIONS,
+    ELEVENLABS_LANGUAGE_CODES,
     LLM_PROVIDER_OPTIONS,
     PET_SCALE_OPTIONS,
     CONVERSATION_MODE_OPTIONS,
@@ -129,14 +138,23 @@ const {
     normalizeDesktopNativeTTSPitch,
     normalizeDesktopNativeTTSRate,
     normalizeDesktopNativeTTSVolume,
+    normalizeChunkedTtsEnabled,
     normalizeElevenLabsApiBase,
     normalizeElevenLabsApiKey,
+    normalizeElevenLabsLanguageCode,
     normalizeElevenLabsModelId,
+    normalizeElevenLabsOptimizeStreamingLatency,
     normalizeElevenLabsOutputFormat,
+    normalizeElevenLabsSimilarityBoost,
+    normalizeElevenLabsSpeed,
+    normalizeElevenLabsStability,
+    normalizeElevenLabsStyle,
     normalizeElevenLabsTimeoutMs,
+    normalizeElevenLabsUseSpeakerBoost,
+    normalizeElevenLabsVoiceProfiles,
     normalizeElevenLabsVoiceId,
     normalizeEmailProfiles,
-    normalizeHumanClawStateDir,
+    normalizeAILISStateDir,
     normalizeLlmApiKey,
     normalizeLlmBaseUrl,
     normalizeLlmModel,
@@ -160,7 +178,7 @@ const {
 } = require('./store.cjs');
 
 const DEFAULT_DEV_SERVER_URL = 'http://127.0.0.1:5173';
-const devServerUrl = process.env.AIGRIL_DESKTOP_DEV_URL || '';
+const devServerUrl = process.env.AILIS_DESKTOP_DEV_URL || '';
 const PET_MIN_SIZE = getScaledPetSize(PET_SCALE_OPTIONS[0]);
 const CHAT_MIN_WIDTH = 360;
 const CHAT_MIN_HEIGHT = 420;
@@ -172,13 +190,12 @@ const PET_DIALOGUE_DEFAULT_EXTRA_TOP = DEFAULT_AVATAR_DIALOGUE_BUBBLE_EXTRA_TOP;
 const PET_DIALOGUE_DEFAULT_EXTRA_WIDTH = DEFAULT_AVATAR_DIALOGUE_BUBBLE_EXTRA_WIDTH;
 const PET_DIALOGUE_MAX_EXTRA_TOP = 360;
 const PET_DIALOGUE_MAX_EXTRA_WIDTH = 520;
-const KOKORO_WARMUP_DELAY_MS = 1200;
 const COSYVOICE3_WARMUP_DELAY_MS = 6500;
-const LOCAL_RESOURCE_PROTOCOL = 'aigril-resource';
-const SPEECH_MODEL_PROTOCOL = 'aigril-model';
+const LOCAL_RESOURCE_PROTOCOL = 'ailis-resource';
+const SPEECH_MODEL_PROTOCOL = 'ailis-model';
 const SPEECH_MODEL_CACHE_DIRNAME = 'speech-models';
 const VISION_CACHE_DIRNAME = 'vision-snapshots';
-const HUMANCLAW_STATE_DIRNAME = '.humanclaw-state';
+const AILIS_STATE_DIRNAME = '.ailis-state';
 const VISION_CACHE_MAX_FILES = 40;
 const CHAT_FILE_ATTACHMENT_LIMIT = 12;
 const VISION_REGION_MIN_SIZE_DIP = 12;
@@ -189,6 +206,28 @@ const SPEECH_MODEL_REMOTE_HOSTS = {
     huggingface: 'https://huggingface.co/'
 };
 const PET_CURSOR_TRACK_INTERVAL_MS = 50;
+const APP_ICON_PATH = path.join(__dirname, 'assets', 'ailis-icon.png');
+const APP_TRAY_ICON_PATH = path.join(__dirname, 'assets', 'ailis-tray.png');
+
+function getExistingImagePath(...candidatePaths) {
+    for (const candidatePath of candidatePaths) {
+        if (candidatePath && fs.existsSync(candidatePath)) {
+            return candidatePath;
+        }
+    }
+    return '';
+}
+
+function getAppIconPath() {
+    return getExistingImagePath(APP_ICON_PATH);
+}
+
+function getTrayIconPath() {
+    return getExistingImagePath(APP_TRAY_ICON_PATH, APP_ICON_PATH);
+}
+
+app.setName('AILIS');
+app.setAppUserModelId('com.ailis.desktop');
 
 let petWindow = null;
 let chatWindow = null;
@@ -200,9 +239,12 @@ let tray = null;
 let isQuitting = false;
 let desktopState = null;
 let desktopASRManager = null;
+let voiceRuntimeBootstrap = null;
+let vllmLocalDeployer = null;
 let assistantGateway = null;
 let openclawRuntimeSupervisor = null;
-let humanClawGateway = null;
+let ailisGateway = null;
+let ailisGatewayStartPromise = null;
 let petDialogueCollapsedBounds = null;
 let petDialogueExpanded = false;
 let petDialogueExtraTop = 0;
@@ -216,10 +258,11 @@ let petCursorTrackingLastSignature = '';
 let visionRegionSelectionRequest = null;
 const windowPersistTimers = new Map();
 const speechModelDownloadTasks = new Map();
-const desktopPlatformAdapter = createHumanClawDesktopPlatformAdapter({
+const desktopPlatformAdapter = createAILISDesktopPlatformAdapter({
     BrowserWindow,
     desktopCapturer,
     screen,
+    icon: getAppIconPath(),
     preloadPath: path.join(__dirname, 'preload.cjs'),
     loadWindowContent
 });
@@ -313,22 +356,54 @@ function getProjectRoot() {
     return path.resolve(__dirname, '..');
 }
 
-function getDefaultHumanClawStateDir() {
-    return path.join(getProjectRoot(), HUMANCLAW_STATE_DIRNAME);
+function getDefaultAILISStateDir() {
+    return path.join(getProjectRoot(), AILIS_STATE_DIRNAME);
 }
 
-function resolveHumanClawStateDir(value = '') {
-    const normalized = normalizeHumanClawStateDir(value || DEFAULT_HUMANCLAW_STATE_DIR);
+function resolveAILISStateDir(value = '') {
+    const normalized = normalizeAILISStateDir(value || DEFAULT_AILIS_STATE_DIR);
     if (!normalized) {
-        return getDefaultHumanClawStateDir();
+        return getDefaultAILISStateDir();
     }
     return path.isAbsolute(normalized)
         ? path.resolve(normalized)
         : path.resolve(getProjectRoot(), normalized);
 }
 
-function getPersistedHumanClawStateDir() {
-    return resolveHumanClawStateDir(desktopState?.preferences?.humanClawStateDir);
+function getPersistedAILISStateDir() {
+    return resolveAILISStateDir(desktopState?.preferences?.ailisStateDir);
+}
+
+function getVoiceRuntimeBootstrap() {
+    if (!voiceRuntimeBootstrap) {
+        voiceRuntimeBootstrap = new VoiceRuntimeBootstrap({
+            projectRoot: getProjectRoot(),
+            userDataPath: app.getPath('userData'),
+            appDataPath: app.getPath('appData'),
+            platform: process.platform
+        });
+    }
+    return voiceRuntimeBootstrap;
+}
+
+function getVllmLocalDeployer() {
+    if (!vllmLocalDeployer) {
+        vllmLocalDeployer = new VllmLocalDeployer({
+            projectRoot: getProjectRoot(),
+            platform: process.platform
+        });
+    }
+    return vllmLocalDeployer;
+}
+
+async function bootstrapVoiceRuntime(payload = {}) {
+    const result = await getVoiceRuntimeBootstrap().bootstrap(payload || {});
+    configureCosyVoice3TTS({
+        projectRoot: getProjectRoot(),
+        userDataPath: app.getPath('userData'),
+        pythonPath: getVoiceRuntimeBootstrap().getPreferredVoicePythonPath()
+    });
+    return result;
 }
 
 function getVisionSnapshotLabel(target) {
@@ -675,7 +750,7 @@ function requestVisionRegionSelection(display) {
     }
 
     const selectionWindow = desktopPlatformAdapter.createRegionSelectionWindow(display, {
-        title: 'AIGL Region Capture'
+        title: 'AILIS Region Capture'
     });
 
     const request = {};
@@ -1017,10 +1092,25 @@ async function handleSpeechModelProtocol(request) {
 }
 
 function makeTrayIcon() {
+    const trayIconPath = getTrayIconPath();
+    if (trayIconPath) {
+        const image = nativeImage.createFromPath(trayIconPath);
+        if (!image.isEmpty()) {
+            return image.resize({ width: 16, height: 16 });
+        }
+    }
+
     const svg = `
         <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">
-            <rect width="64" height="64" rx="14" fill="#73b8e5"/>
-            <text x="50%" y="58%" text-anchor="middle" font-size="28" font-family="Segoe UI, Arial" fill="#ffffff">AG</text>
+            <defs>
+                <linearGradient id="ailis-bg" x1="0" x2="1" y1="0" y2="1">
+                    <stop offset="0%" stop-color="#e8f6ff"/>
+                    <stop offset="100%" stop-color="#ffefe5"/>
+                </linearGradient>
+            </defs>
+            <rect width="64" height="64" rx="16" fill="url(#ailis-bg)"/>
+            <circle cx="22" cy="48" r="18" fill="#73b8e5" opacity="0.55"/>
+            <text x="50%" y="59%" text-anchor="middle" font-size="28" font-family="Segoe UI, Arial" font-weight="700" fill="#49606d">A</text>
         </svg>
     `;
 
@@ -1150,7 +1240,7 @@ function startPetCursorTracking() {
         }
         petCursorTrackingLastSignature = signature;
 
-        petWindow.webContents.send('aigril:pet-cursor-point', {
+        petWindow.webContents.send('ailis:pet-cursor-point', {
             inside,
             clientX,
             clientY,
@@ -1229,13 +1319,13 @@ function setPetDialogueWindowExpanded(
     };
 }
 
-function persistDesktopState() {
-    desktopState = saveDesktopState(app, desktopState);
+function persistDesktopState(options = {}) {
+    desktopState = saveDesktopState(app, desktopState, options);
     refreshTrayMenu();
 }
 
 function resolveDesktopBackendBaseUrl() {
-    const envBackendBaseUrl = String(process.env.AIGRIL_BACKEND_BASE_URL || '').trim();
+    const envBackendBaseUrl = String(process.env.AILIS_BACKEND_BASE_URL || '').trim();
     if (envBackendBaseUrl) {
         return normalizeBackendBaseUrl(envBackendBaseUrl);
     }
@@ -1251,7 +1341,7 @@ function resolveDesktopBackendMode() {
 
 function resolveOpenClawGatewayUrl() {
     const envGatewayUrl = String(
-        process.env.AIGRIL_OPENCLAW_GATEWAY_URL ||
+        process.env.AILIS_OPENCLAW_GATEWAY_URL ||
         process.env.OPENCLAW_GATEWAY_URL ||
         ''
     ).trim();
@@ -1287,10 +1377,24 @@ function getPersistedLlmSettings() {
 
 function getEnvironmentLlmApiKey(provider = DEFAULT_LLM_PROVIDER) {
     const normalizedProvider = normalizeLlmProvider(provider);
+    if (normalizedProvider === 'ollama') {
+        return normalizeLlmApiKey(
+            process.env.OLLAMA_API_KEY ||
+                process.env.AILIS_OLLAMA_API_KEY ||
+                ''
+        );
+    }
+    if (normalizedProvider === 'vllm') {
+        return normalizeLlmApiKey(
+            process.env.VLLM_API_KEY ||
+                process.env.AILIS_VLLM_API_KEY ||
+                ''
+        );
+    }
     if (normalizedProvider === 'openai-responses') {
         return normalizeLlmApiKey(
             process.env.OPENAI_API_KEY ||
-                process.env.AIGRIL_OPENAI_API_KEY ||
+                process.env.AILIS_OPENAI_API_KEY ||
                 ''
         );
     }
@@ -1298,7 +1402,7 @@ function getEnvironmentLlmApiKey(provider = DEFAULT_LLM_PROVIDER) {
         return normalizeLlmApiKey(
             process.env.ANTHROPIC_API_KEY ||
                 process.env.CLAUDE_API_KEY ||
-                process.env.AIGRIL_ANTHROPIC_API_KEY ||
+                process.env.AILIS_ANTHROPIC_API_KEY ||
                 ''
         );
     }
@@ -1307,7 +1411,7 @@ function getEnvironmentLlmApiKey(provider = DEFAULT_LLM_PROVIDER) {
             process.env.GEMINI_API_KEY ||
                 process.env.GOOGLE_API_KEY ||
                 process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
-                process.env.AIGRIL_GEMINI_API_KEY ||
+                process.env.AILIS_GEMINI_API_KEY ||
                 ''
         );
     }
@@ -1321,18 +1425,26 @@ function getEnvironmentLlmApiKey(provider = DEFAULT_LLM_PROVIDER) {
     );
 }
 
+function isLocalLlmProvider(provider = DEFAULT_LLM_PROVIDER) {
+    const normalizedProvider = normalizeLlmProvider(provider);
+    return normalizedProvider === 'ollama' || normalizedProvider === 'vllm';
+}
+
 function getResolvedLlmSettings() {
     const persistedSettings = getPersistedLlmSettings();
     const environmentApiKey = getEnvironmentLlmApiKey(persistedSettings.provider);
-    const apiKeySource = persistedSettings.apiKey
+    const apiKey = isLocalLlmProvider(persistedSettings.provider)
+        ? environmentApiKey
+        : persistedSettings.apiKey || environmentApiKey;
+    const apiKeySource = apiKey && persistedSettings.apiKey && !isLocalLlmProvider(persistedSettings.provider)
         ? 'saved'
-        : environmentApiKey
+        : apiKey
         ? 'environment'
         : 'none';
 
     return {
         ...persistedSettings,
-        apiKey: persistedSettings.apiKey || environmentApiKey,
+        apiKey,
         apiKeySource
     };
 }
@@ -1379,7 +1491,7 @@ function getPersistedComputerControlEnabled() {
     );
 }
 
-function getHumanClawDefaultContext() {
+function getAILISDefaultContext() {
     if (getPersistedComputerControlEnabled()) {
         return {
             computerControlEnabled: true,
@@ -1438,28 +1550,100 @@ function getRendererLlmPreferences() {
     };
 }
 
-function getPersistedElevenLabsSettings() {
+function detectElevenLabsLanguageFromText(text) {
+    const source = String(text || '');
+    const kanaCount = (source.match(/[\u3040-\u30ff]/g) || []).length;
+    if (kanaCount > 0) {
+        return 'ja';
+    }
+
+    const cjkCount = (source.match(/[\u3400-\u9fff]/g) || []).length;
+    if (cjkCount > 0) {
+        return 'zh';
+    }
+
+    const latinCount = (source.match(/[A-Za-z]/g) || []).length;
+    if (latinCount > 0) {
+        return 'en';
+    }
+
+    return '';
+}
+
+function normalizeRequestedElevenLabsLanguage(payload = {}, preferences = {}) {
+    const requestedLanguage = String(
+        payload.languageCode || payload.language_code || payload.language || ''
+    ).trim().toLowerCase();
+    if (ELEVENLABS_LANGUAGE_CODES.includes(requestedLanguage)) {
+        return requestedLanguage;
+    }
+
+    const detectedLanguage = detectElevenLabsLanguageFromText(payload.text);
+    if (detectedLanguage) {
+        return detectedLanguage;
+    }
+
+    return normalizeElevenLabsLanguageCode(
+        preferences.elevenLabsLanguageCode || DEFAULT_ELEVENLABS_LANGUAGE_CODE
+    );
+}
+
+function getPersistedElevenLabsVoiceProfiles() {
     const preferences = desktopState?.preferences || {};
+    return normalizeElevenLabsVoiceProfiles(preferences.elevenLabsVoiceProfiles, preferences);
+}
+
+function getPersistedElevenLabsSettings(payload = {}) {
+    const preferences = desktopState?.preferences || {};
+    const voiceProfiles = getPersistedElevenLabsVoiceProfiles();
+    const languageCode = normalizeRequestedElevenLabsLanguage(payload, preferences);
+    const selectedProfile = voiceProfiles[languageCode] || voiceProfiles.zh || DEFAULT_ELEVENLABS_VOICE_PROFILES.zh;
+
     return {
         apiBase: normalizeElevenLabsApiBase(
             preferences.elevenLabsApiBase || DEFAULT_ELEVENLABS_API_BASE
         ),
         apiKey: normalizeElevenLabsApiKey(preferences.elevenLabsApiKey || DEFAULT_ELEVENLABS_API_KEY),
-        voiceId: normalizeElevenLabsVoiceId(preferences.elevenLabsVoiceId || DEFAULT_ELEVENLABS_VOICE_ID),
-        modelId: normalizeElevenLabsModelId(preferences.elevenLabsModelId || DEFAULT_ELEVENLABS_MODEL_ID),
+        voiceId: normalizeElevenLabsVoiceId(
+            selectedProfile.voiceId || preferences.elevenLabsVoiceId || DEFAULT_ELEVENLABS_VOICE_ID
+        ),
+        modelId: normalizeElevenLabsModelId(
+            selectedProfile.modelId || preferences.elevenLabsModelId || DEFAULT_ELEVENLABS_MODEL_ID
+        ),
+        languageCode,
         outputFormat: normalizeElevenLabsOutputFormat(
-            preferences.elevenLabsOutputFormat || DEFAULT_ELEVENLABS_OUTPUT_FORMAT
+            selectedProfile.outputFormat || preferences.elevenLabsOutputFormat || DEFAULT_ELEVENLABS_OUTPUT_FORMAT
         ),
         timeoutMs: normalizeElevenLabsTimeoutMs(
             preferences.elevenLabsTimeoutMs || DEFAULT_ELEVENLABS_TIMEOUT_MS
         ),
         enableLogging: true,
-        optimizeStreamingLatency: 0,
-        stability: 0.45,
-        similarityBoost: 0.8,
-        style: 0.15,
-        speed: 1.0,
-        useSpeakerBoost: true
+        optimizeStreamingLatency: normalizeElevenLabsOptimizeStreamingLatency(
+            selectedProfile.optimizeStreamingLatency ??
+                preferences.elevenLabsOptimizeStreamingLatency ??
+                DEFAULT_ELEVENLABS_OPTIMIZE_STREAMING_LATENCY
+        ),
+        stability: normalizeElevenLabsStability(
+            selectedProfile.stability ?? preferences.elevenLabsStability ?? DEFAULT_ELEVENLABS_STABILITY
+        ),
+        similarityBoost: normalizeElevenLabsSimilarityBoost(
+            selectedProfile.similarityBoost ??
+                preferences.elevenLabsSimilarityBoost ??
+                DEFAULT_ELEVENLABS_SIMILARITY_BOOST
+        ),
+        style: normalizeElevenLabsStyle(
+            selectedProfile.style ?? preferences.elevenLabsStyle ?? DEFAULT_ELEVENLABS_STYLE
+        ),
+        speed: normalizeElevenLabsSpeed(
+            selectedProfile.speed ?? preferences.elevenLabsSpeed ?? DEFAULT_ELEVENLABS_SPEED
+        ),
+        useSpeakerBoost: normalizeElevenLabsUseSpeakerBoost(
+            selectedProfile.useSpeakerBoost ??
+                preferences.elevenLabsUseSpeakerBoost ??
+                DEFAULT_ELEVENLABS_USE_SPEAKER_BOOST
+        ),
+        voiceProfiles,
+        selectedLanguageCode: languageCode
     };
 }
 
@@ -1469,8 +1653,16 @@ function getRendererElevenLabsPreferences() {
         elevenLabsApiBase: settings.apiBase,
         elevenLabsVoiceId: settings.voiceId,
         elevenLabsModelId: settings.modelId,
+        elevenLabsLanguageCode: settings.languageCode,
         elevenLabsOutputFormat: settings.outputFormat,
         elevenLabsTimeoutMs: settings.timeoutMs,
+        elevenLabsOptimizeStreamingLatency: settings.optimizeStreamingLatency,
+        elevenLabsStability: settings.stability,
+        elevenLabsSimilarityBoost: settings.similarityBoost,
+        elevenLabsStyle: settings.style,
+        elevenLabsSpeed: settings.speed,
+        elevenLabsUseSpeakerBoost: settings.useSpeakerBoost,
+        elevenLabsVoiceProfiles: settings.voiceProfiles,
         elevenLabsApiKeyConfigured: Boolean(settings.apiKey),
         elevenLabsApiKeySource: settings.apiKey ? 'saved' : 'none'
     };
@@ -1507,8 +1699,8 @@ function extractLatestUserTextFromLlmPayload(payload = {}) {
     return '';
 }
 
-function attachAiglMemoryToLlmPayload(payload = {}) {
-    if (payload.includeAiglMemory !== true) {
+function attachAilisMemoryToLlmPayload(payload = {}) {
+    if (payload.includeAilisMemory !== true) {
         return payload;
     }
     const messages = Array.isArray(payload.messages) ? payload.messages : [];
@@ -1518,13 +1710,13 @@ function attachAiglMemoryToLlmPayload(payload = {}) {
 
     let memoryContext = '';
     try {
-        memoryContext = ensureHumanClawGateway().memoryRuntime?.compileContext?.({
+        memoryContext = ensureAILISGateway().memoryRuntime?.compileContext?.({
             sessionId: payload.sessionId || payload.sessionKey || 'main',
             message: payload.memoryUserMessage || extractLatestUserTextFromLlmPayload(payload),
             messageHistory: payload.messageHistory || []
         }) || '';
     } catch (error) {
-        console.warn('[humanclaw-memory] 直连 LLM 注入记忆失败：', error.message || error);
+        console.warn('[ailis-memory] 直连 LLM 注入记忆失败：', error.message || error);
     }
 
     if (!memoryContext) {
@@ -1534,7 +1726,7 @@ function attachAiglMemoryToLlmPayload(payload = {}) {
     const memoryMessage = {
         role: 'system',
         content: [
-            '以下是 AIGL 的本地长期记忆上下文，只作为辅助参考。',
+            '以下是 AILIS 的本地长期记忆上下文，只作为辅助参考。',
             '若与用户当前明确指令冲突，以当前指令为准；不要主动暴露内部好感度数值。',
             '',
             memoryContext
@@ -1554,11 +1746,11 @@ function attachAiglMemoryToLlmPayload(payload = {}) {
 }
 
 async function callDesktopLlm(payload = {}) {
-    const enrichedPayload = attachAiglMemoryToLlmPayload(payload);
+    const enrichedPayload = attachAilisMemoryToLlmPayload(payload);
     const result = await callDesktopLlmProvider(getResolvedLlmSettings(), enrichedPayload);
-    if (payload.includeAiglMemory === true) {
+    if (payload.includeAilisMemory === true) {
         try {
-            ensureHumanClawGateway().memoryRuntime?.recordTurn?.({
+            ensureAILISGateway().memoryRuntime?.recordTurn?.({
                 sessionId: payload.sessionId || payload.sessionKey || 'main',
                 userMessage: payload.memoryUserMessage || extractLatestUserTextFromLlmPayload(payload),
                 assistantMessage: result?.content || result?.error || '',
@@ -1568,22 +1760,38 @@ async function callDesktopLlm(payload = {}) {
                 attachments: payload.memoryAttachments || []
             });
         } catch (error) {
-            console.warn('[humanclaw-memory] 直连 LLM 写入记忆失败：', error.message || error);
+            console.warn('[ailis-memory] 直连 LLM 写入记忆失败：', error.message || error);
         }
     }
     return result;
 }
 
 async function callDesktopElevenLabsTts(payload = {}) {
-    return synthesizeElevenLabsSpeech(getPersistedElevenLabsSettings(), payload);
+    return synthesizeElevenLabsSpeech(getPersistedElevenLabsSettings(payload), payload);
 }
 
 async function callDesktopTts(payload = {}) {
     if (payload?.provider === 'cosyvoice3') {
+        const runtime = getVoiceRuntimeBootstrap();
+        const summary = runtime.getFastSummary();
+        if (!summary.cosyVoice3?.ok) {
+            return {
+                ok: false,
+                provider: 'cosyvoice3',
+                code: 'voice_runtime_needs_setup',
+                error: `CosyVoice3 本地运行时尚未就绪，需要完成 ${summary.installStepCount || 0} 个安装/修复步骤。`,
+                runtimeSetup: summary
+            };
+        }
         return synthesizeCosyVoice3Speech({}, payload);
     }
-    if (payload?.provider === 'kokoro') {
-        return synthesizeKokoroSpeech({}, payload);
+    if (payload?.provider && payload.provider !== 'elevenlabs' && payload.provider !== 'server') {
+        return {
+            ok: false,
+            provider: payload.provider,
+            code: 'unsupported_tts_provider',
+            error: '当前只支持关闭语音、ElevenLabs 和 CosyVoice3。'
+        };
     }
     return callDesktopElevenLabsTts(payload);
 }
@@ -1592,6 +1800,12 @@ function warmupDesktopSpeechMode(mode, { delayMs = 0 } = {}) {
     const normalizedMode = normalizeSpeechMode(mode);
     const runWarmup = () => {
         if (normalizedMode === 'cosyvoice3') {
+            const runtime = getVoiceRuntimeBootstrap();
+            const summary = runtime.getFastSummary();
+            if (!summary.cosyVoice3?.ok) {
+                console.warn(`[cosyvoice3] 本地运行时尚未就绪，需要 ${summary.installStepCount || 0} 个安装/修复步骤。`);
+                return;
+            }
             warmupCosyVoice3TTS({ timeoutMs: 300000 })
                 .then((result) => {
                     if (!result?.ok) {
@@ -1606,22 +1820,6 @@ function warmupDesktopSpeechMode(mode, { delayMs = 0 } = {}) {
             return;
         }
 
-        if (normalizedMode === 'kokoro') {
-            warmupKokoroTTS({ timeoutMs: 120000 })
-                .then((result) => {
-                    if (!result?.ok) {
-                        console.warn('[kokoro] 后台预热失败：', result?.error || result);
-                        return;
-                    }
-                    if (result.skipped) {
-                        return;
-                    }
-                    console.log(`[kokoro] 后台预热完成：${result.elapsedSeconds}s`);
-                })
-                .catch((error) => {
-                    console.warn('[kokoro] 后台预热失败：', error.message || error);
-                });
-        }
     };
 
     if (delayMs > 0) {
@@ -1643,7 +1841,7 @@ function broadcastAssistantEvent(payload) {
     }
 
     for (const window of getOpenWindows()) {
-        window.webContents.send('aigril:assistant-event', payload);
+        window.webContents.send('ailis:assistant-event', payload);
     }
 }
 
@@ -1653,21 +1851,21 @@ function broadcastHumanGatewayEvent(payload) {
     }
 
     for (const window of getOpenWindows()) {
-        window.webContents.send('aigril:gateway-event', payload);
+        window.webContents.send('ailis:gateway-event', payload);
     }
 }
 
-function ensureHumanClawGateway() {
-    if (humanClawGateway) {
-        return humanClawGateway;
+function ensureAILISGateway() {
+    if (ailisGateway) {
+        return ailisGateway;
     }
 
-    humanClawGateway = new HumanClawGateway({
+    ailisGateway = new AILISGateway({
         app,
         projectRoot: getProjectRoot(),
         workspaceRoot: getProjectRoot(),
-        auditDir: getPersistedHumanClawStateDir(),
-        getDefaultContext: () => getHumanClawDefaultContext(),
+        auditDir: getPersistedAILISStateDir(),
+        getDefaultContext: () => getAILISDefaultContext(),
         getEmailProfiles: () => getPersistedEmailProfiles(),
         visionServices: {
             permissionPolicy: 'manual',
@@ -1675,10 +1873,39 @@ function ensureHumanClawGateway() {
             capture: (payload) => captureVisionSnapshotForTool(payload)
         }
     });
-    humanClawGateway.on('event', (event) => {
+    ailisGateway.on('event', (event) => {
         broadcastHumanGatewayEvent(event);
     });
-    return humanClawGateway;
+    return ailisGateway;
+}
+
+async function ensureAILISGatewayStarted(reason = 'manual') {
+    const gateway = ensureAILISGateway();
+    if (gateway.getStatus().running) {
+        return gateway.getStatus();
+    }
+    if (!ailisGatewayStartPromise) {
+        ailisGatewayStartPromise = gateway.start()
+            .catch((error) => {
+                console.warn(`[ailis-gateway] ${reason} 启动失败：`, error.message || error);
+                throw error;
+            })
+            .finally(() => {
+                ailisGatewayStartPromise = null;
+            });
+    }
+    return ailisGatewayStartPromise;
+}
+
+async function getAILISGatewayStatusEnsuringStarted(reason = 'status') {
+    try {
+        return await ensureAILISGatewayStarted(reason);
+    } catch (error) {
+        return {
+            ...ensureAILISGateway().getStatus(),
+            startError: error?.message || String(error)
+        };
+    }
 }
 
 function ensureOpenClawRuntimeSupervisor() {
@@ -1742,7 +1969,7 @@ function getAssistantStatusSnapshot() {
     status.managedRuntime = supervisor.getStatus();
     status.toolSurface = getOpenClawToolSurfaceSummary();
     status.toolSurfaceValidation = validateOpenClawToolSurface().summary;
-    status.humanGateway = ensureHumanClawGateway().getStatus();
+    status.humanGateway = ensureAILISGateway().getStatus();
 
     return status;
 }
@@ -1809,9 +2036,9 @@ function getRendererPreferences() {
         backendBaseUrl: resolveDesktopBackendBaseUrl(),
         backendMode: resolveDesktopBackendMode(),
         openclawGatewayUrl: resolveOpenClawGatewayUrl(),
-        humanClawStateDir: normalizeHumanClawStateDir(desktopState?.preferences?.humanClawStateDir),
-        humanClawResolvedStateDir: getPersistedHumanClawStateDir(),
-        humanClawDefaultStateDir: getDefaultHumanClawStateDir(),
+        ailisStateDir: normalizeAILISStateDir(desktopState?.preferences?.ailisStateDir),
+        ailisResolvedStateDir: getPersistedAILISStateDir(),
+        ailisDefaultStateDir: getDefaultAILISStateDir(),
         ...getRendererLlmPreferences(),
         ...getRendererElevenLabsPreferences(),
         computerControlEnabled: getPersistedComputerControlEnabled(),
@@ -1866,6 +2093,9 @@ function getRendererPreferences() {
         ),
         desktopNativeTtsVolume: normalizeDesktopNativeTTSVolume(
             desktopState?.preferences?.desktopNativeTtsVolume || DEFAULT_DESKTOP_NATIVE_TTS_VOLUME
+        ),
+        chunkedTtsEnabled: normalizeChunkedTtsEnabled(
+            desktopState?.preferences?.chunkedTtsEnabled ?? DEFAULT_CHUNKED_TTS_ENABLED
         ),
         autoChatEnabled: normalizeAutoChatEnabled(
             desktopState?.preferences?.autoChatEnabled ?? DEFAULT_AUTO_CHAT_ENABLED
@@ -1943,11 +2173,13 @@ function getControlPanelState() {
             emailProviderOptions: EMAIL_PROVIDER_OPTIONS
         },
         assistant: {
-            selectedBackendMode: 'humanclaw',
-            humanGateway: ensureHumanClawGateway().getStatus(),
+            selectedBackendMode: 'ailis',
+            humanGateway: ensureAILISGateway().getStatus(),
             toolSurface: getOpenClawToolSurfaceSummary(),
             toolSurfaceValidation: validateOpenClawToolSurface().summary
         },
+        voiceRuntime: getVoiceRuntimeBootstrap().getFastSummary(),
+        vllmRuntime: getVllmLocalDeployer().getStatus(),
         environment: {
             version: app.getVersion(),
             isPackaged: app.isPackaged,
@@ -1962,9 +2194,9 @@ function broadcastPreferencesUpdated() {
         preferences: getRendererPreferences()
     };
 
-    petWindow?.webContents.send('aigril:preferences-updated', payload);
-    chatWindow?.webContents.send('aigril:preferences-updated', payload);
-    controlWindow?.webContents.send('aigril:preferences-updated', payload);
+    petWindow?.webContents.send('ailis:preferences-updated', payload);
+    chatWindow?.webContents.send('ailis:preferences-updated', payload);
+    controlWindow?.webContents.send('ailis:preferences-updated', payload);
 }
 
 function getWindowMinimumSize(key) {
@@ -2044,11 +2276,11 @@ function openExternalLinks(window) {
 
 function hookRendererDiagnostics(window, label) {
     const webContents = window?.webContents;
-    if (!webContents || webContents.__aigrilDiagnosticsHooked) {
+    if (!webContents || webContents.__ailisDiagnosticsHooked) {
         return;
     }
 
-    webContents.__aigrilDiagnosticsHooked = true;
+    webContents.__ailisDiagnosticsHooked = true;
     webContents.on('console-message', (_event, level, message, line, sourceId) => {
         console.log(`[renderer:${label}] console(${level}) ${message} (${sourceId || 'unknown'}:${line || 0})`);
     });
@@ -2071,11 +2303,11 @@ function hookRendererDiagnostics(window, label) {
 
 function hookWindowContextMenu(window, label) {
     const webContents = window?.webContents;
-    if (!webContents || webContents.__aigrilContextMenuHooked) {
+    if (!webContents || webContents.__ailisContextMenuHooked) {
         return;
     }
 
-    webContents.__aigrilContextMenuHooked = true;
+    webContents.__ailisContextMenuHooked = true;
     webContents.on('context-menu', (event, params = {}) => {
         const sourceWindow = BrowserWindow.fromWebContents(webContents) || window;
         const inputFieldType = String(params.inputFieldType || 'none');
@@ -2156,8 +2388,8 @@ function showControlPanel() {
         return true;
     }
 
-    controlWindow.__aigrilShowWhenReady = true;
-    const isControlLoaded = Boolean(controlWindow.__aigrilDidFinishLoad);
+    controlWindow.__ailisShowWhenReady = true;
+    const isControlLoaded = Boolean(controlWindow.__ailisDidFinishLoad);
     if (!controlWindow.isVisible() && isControlLoaded) {
         controlWindow.show();
     }
@@ -2169,7 +2401,7 @@ function showControlPanel() {
             if (!controlWindow || controlWindow.isDestroyed()) {
                 return;
             }
-            if (controlWindow.__aigrilShowWhenReady && !controlWindow.isVisible()) {
+            if (controlWindow.__ailisShowWhenReady && !controlWindow.isVisible()) {
                 controlWindow.show();
             }
             controlWindow.focus();
@@ -2186,8 +2418,8 @@ function showAgentLabWindow() {
         return true;
     }
 
-    agentLabWindow.__aigrilShowWhenReady = true;
-    const isLoaded = Boolean(agentLabWindow.__aigrilDidFinishLoad);
+    agentLabWindow.__ailisShowWhenReady = true;
+    const isLoaded = Boolean(agentLabWindow.__ailisDidFinishLoad);
     if (!agentLabWindow.isVisible() && isLoaded) {
         agentLabWindow.show();
     }
@@ -2199,7 +2431,7 @@ function showAgentLabWindow() {
             if (!agentLabWindow || agentLabWindow.isDestroyed()) {
                 return;
             }
-            if (agentLabWindow.__aigrilShowWhenReady && !agentLabWindow.isVisible()) {
+            if (agentLabWindow.__ailisShowWhenReady && !agentLabWindow.isVisible()) {
                 agentLabWindow.show();
             }
             agentLabWindow.focus();
@@ -2233,7 +2465,7 @@ function applyPreferencesPatch(partialPreferences = {}) {
         backendBaseUrl: resolveDesktopBackendBaseUrl(),
         backendMode: rendererPreferences.backendMode,
         openclawGatewayUrl: rendererPreferences.openclawGatewayUrl,
-        humanClawStateDir: rendererPreferences.humanClawStateDir,
+        ailisStateDir: rendererPreferences.ailisStateDir,
         llmProvider: currentLlmSettings.provider,
         llmBaseUrl: currentLlmSettings.baseUrl,
         llmModel: currentLlmSettings.model,
@@ -2244,8 +2476,16 @@ function applyPreferencesPatch(partialPreferences = {}) {
         elevenLabsApiKey: currentElevenLabsSettings.apiKey,
         elevenLabsVoiceId: currentElevenLabsSettings.voiceId,
         elevenLabsModelId: currentElevenLabsSettings.modelId,
+        elevenLabsLanguageCode: currentElevenLabsSettings.languageCode,
         elevenLabsOutputFormat: currentElevenLabsSettings.outputFormat,
         elevenLabsTimeoutMs: currentElevenLabsSettings.timeoutMs,
+        elevenLabsOptimizeStreamingLatency: currentElevenLabsSettings.optimizeStreamingLatency,
+        elevenLabsStability: currentElevenLabsSettings.stability,
+        elevenLabsSimilarityBoost: currentElevenLabsSettings.similarityBoost,
+        elevenLabsStyle: currentElevenLabsSettings.style,
+        elevenLabsSpeed: currentElevenLabsSettings.speed,
+        elevenLabsUseSpeakerBoost: currentElevenLabsSettings.useSpeakerBoost,
+        elevenLabsVoiceProfiles: currentElevenLabsSettings.voiceProfiles,
         computerControlEnabled: rendererPreferences.computerControlEnabled,
         emailProfiles: getPersistedEmailProfiles(),
         cameraDistance: rendererPreferences.cameraDistance,
@@ -2255,6 +2495,7 @@ function applyPreferencesPatch(partialPreferences = {}) {
         desktopNativeTtsRate: rendererPreferences.desktopNativeTtsRate,
         desktopNativeTtsPitch: rendererPreferences.desktopNativeTtsPitch,
         desktopNativeTtsVolume: rendererPreferences.desktopNativeTtsVolume,
+        chunkedTtsEnabled: rendererPreferences.chunkedTtsEnabled,
         autoChatEnabled: rendererPreferences.autoChatEnabled,
         autoChatMinIntervalSec: rendererPreferences.autoChatMinIntervalSec,
         autoChatMaxIntervalSec: rendererPreferences.autoChatMaxIntervalSec,
@@ -2301,8 +2542,8 @@ function applyPreferencesPatch(partialPreferences = {}) {
             partialPreferences.openclawGatewayUrl
         );
     }
-    if ('humanClawStateDir' in partialPreferences) {
-        nextPreferences.humanClawStateDir = normalizeHumanClawStateDir(partialPreferences.humanClawStateDir);
+    if ('ailisStateDir' in partialPreferences) {
+        nextPreferences.ailisStateDir = normalizeAILISStateDir(partialPreferences.ailisStateDir);
     }
     if ('llmProvider' in partialPreferences) {
         nextPreferences.llmProvider = normalizeLlmProvider(partialPreferences.llmProvider);
@@ -2339,6 +2580,11 @@ function applyPreferencesPatch(partialPreferences = {}) {
     if ('elevenLabsModelId' in partialPreferences) {
         nextPreferences.elevenLabsModelId = normalizeElevenLabsModelId(partialPreferences.elevenLabsModelId);
     }
+    if ('elevenLabsLanguageCode' in partialPreferences) {
+        nextPreferences.elevenLabsLanguageCode = normalizeElevenLabsLanguageCode(
+            partialPreferences.elevenLabsLanguageCode
+        );
+    }
     if ('elevenLabsOutputFormat' in partialPreferences) {
         nextPreferences.elevenLabsOutputFormat = normalizeElevenLabsOutputFormat(
             partialPreferences.elevenLabsOutputFormat
@@ -2349,6 +2595,36 @@ function applyPreferencesPatch(partialPreferences = {}) {
             partialPreferences.elevenLabsTimeoutMs
         );
     }
+    if ('elevenLabsOptimizeStreamingLatency' in partialPreferences) {
+        nextPreferences.elevenLabsOptimizeStreamingLatency = normalizeElevenLabsOptimizeStreamingLatency(
+            partialPreferences.elevenLabsOptimizeStreamingLatency
+        );
+    }
+    if ('elevenLabsStability' in partialPreferences) {
+        nextPreferences.elevenLabsStability = normalizeElevenLabsStability(partialPreferences.elevenLabsStability);
+    }
+    if ('elevenLabsSimilarityBoost' in partialPreferences) {
+        nextPreferences.elevenLabsSimilarityBoost = normalizeElevenLabsSimilarityBoost(
+            partialPreferences.elevenLabsSimilarityBoost
+        );
+    }
+    if ('elevenLabsStyle' in partialPreferences) {
+        nextPreferences.elevenLabsStyle = normalizeElevenLabsStyle(partialPreferences.elevenLabsStyle);
+    }
+    if ('elevenLabsSpeed' in partialPreferences) {
+        nextPreferences.elevenLabsSpeed = normalizeElevenLabsSpeed(partialPreferences.elevenLabsSpeed);
+    }
+    if ('elevenLabsUseSpeakerBoost' in partialPreferences) {
+        nextPreferences.elevenLabsUseSpeakerBoost = normalizeElevenLabsUseSpeakerBoost(
+            partialPreferences.elevenLabsUseSpeakerBoost
+        );
+    }
+    if ('elevenLabsVoiceProfiles' in partialPreferences) {
+        nextPreferences.elevenLabsVoiceProfiles = normalizeElevenLabsVoiceProfiles(
+            partialPreferences.elevenLabsVoiceProfiles,
+            nextPreferences
+        );
+    }
     if ('elevenLabsApiKey' in partialPreferences) {
         const nextApiKey = normalizeElevenLabsApiKey(partialPreferences.elevenLabsApiKey);
         if (nextApiKey) {
@@ -2357,6 +2633,38 @@ function applyPreferencesPatch(partialPreferences = {}) {
     }
     if (partialPreferences.elevenLabsApiKeyAction === 'clear') {
         nextPreferences.elevenLabsApiKey = '';
+    }
+    if (
+        'elevenLabsVoiceId' in partialPreferences ||
+        'elevenLabsModelId' in partialPreferences ||
+        'elevenLabsLanguageCode' in partialPreferences ||
+        'elevenLabsOutputFormat' in partialPreferences ||
+        'elevenLabsOptimizeStreamingLatency' in partialPreferences ||
+        'elevenLabsStability' in partialPreferences ||
+        'elevenLabsSimilarityBoost' in partialPreferences ||
+        'elevenLabsStyle' in partialPreferences ||
+        'elevenLabsSpeed' in partialPreferences ||
+        'elevenLabsUseSpeakerBoost' in partialPreferences ||
+        'elevenLabsVoiceProfiles' in partialPreferences
+    ) {
+        const activeLanguageCode = normalizeElevenLabsLanguageCode(nextPreferences.elevenLabsLanguageCode);
+        const nextProfiles = normalizeElevenLabsVoiceProfiles(nextPreferences.elevenLabsVoiceProfiles, nextPreferences);
+        nextProfiles[activeLanguageCode] = {
+            ...nextProfiles[activeLanguageCode],
+            voiceId: normalizeElevenLabsVoiceId(nextPreferences.elevenLabsVoiceId),
+            modelId: normalizeElevenLabsModelId(nextPreferences.elevenLabsModelId),
+            languageCode: activeLanguageCode,
+            outputFormat: normalizeElevenLabsOutputFormat(nextPreferences.elevenLabsOutputFormat),
+            optimizeStreamingLatency: normalizeElevenLabsOptimizeStreamingLatency(
+                nextPreferences.elevenLabsOptimizeStreamingLatency
+            ),
+            stability: normalizeElevenLabsStability(nextPreferences.elevenLabsStability),
+            similarityBoost: normalizeElevenLabsSimilarityBoost(nextPreferences.elevenLabsSimilarityBoost),
+            style: normalizeElevenLabsStyle(nextPreferences.elevenLabsStyle),
+            speed: normalizeElevenLabsSpeed(nextPreferences.elevenLabsSpeed),
+            useSpeakerBoost: normalizeElevenLabsUseSpeakerBoost(nextPreferences.elevenLabsUseSpeakerBoost)
+        };
+        nextPreferences.elevenLabsVoiceProfiles = normalizeElevenLabsVoiceProfiles(nextProfiles, nextPreferences);
     }
     if ('computerControlEnabled' in partialPreferences) {
         nextPreferences.computerControlEnabled = normalizeComputerControlEnabled(
@@ -2449,6 +2757,9 @@ function applyPreferencesPatch(partialPreferences = {}) {
             partialPreferences.desktopNativeTtsVolume
         );
     }
+    if ('chunkedTtsEnabled' in partialPreferences) {
+        nextPreferences.chunkedTtsEnabled = normalizeChunkedTtsEnabled(partialPreferences.chunkedTtsEnabled);
+    }
     if ('autoChatEnabled' in partialPreferences) {
         nextPreferences.autoChatEnabled = normalizeAutoChatEnabled(partialPreferences.autoChatEnabled);
     }
@@ -2530,8 +2841,8 @@ function applyPreferencesPatch(partialPreferences = {}) {
     nextPreferences.autoChatMaxIntervalSec = nextAutoChatMaxIntervalSec;
 
     const petScaleChanged = nextPreferences.petScale !== rendererPreferences.petScale;
-    const humanClawStateDirChanged =
-        resolveHumanClawStateDir(nextPreferences.humanClawStateDir) !== rendererPreferences.humanClawResolvedStateDir;
+    const ailisStateDirChanged =
+        resolveAILISStateDir(nextPreferences.ailisStateDir) !== rendererPreferences.ailisResolvedStateDir;
 
     desktopState.preferences = {
         ...desktopState.preferences,
@@ -2589,7 +2900,20 @@ function applyPreferencesPatch(partialPreferences = {}) {
         petWindow.setSkipTaskbar(nextPreferences.petSkipTaskbar);
     }
 
-    persistDesktopState();
+    const allowBlankCredentials = [];
+    if (partialPreferences.llmApiKeyAction === 'clear') {
+        allowBlankCredentials.push('llmApiKey');
+    }
+    if (partialPreferences.elevenLabsApiKeyAction === 'clear') {
+        allowBlankCredentials.push('elevenLabsApiKey');
+    }
+    for (const [providerId, profile] of Object.entries(partialPreferences.emailProfiles || {})) {
+        if (profile?.secretAction === 'clear') {
+            allowBlankCredentials.push(`emailProfiles.${providerId}.secret`);
+        }
+    }
+
+    persistDesktopState({ allowBlankCredentials });
     broadcastPreferencesUpdated();
 
     if ('speechMode' in partialPreferences) {
@@ -2604,16 +2928,17 @@ function applyPreferencesPatch(partialPreferences = {}) {
         });
     }
 
-    if (humanClawStateDirChanged && humanClawGateway) {
-        const oldGateway = humanClawGateway;
-        humanClawGateway = null;
+    if (ailisStateDirChanged && ailisGateway) {
+        const oldGateway = ailisGateway;
+        ailisGateway = null;
+        ailisGatewayStartPromise = null;
         void oldGateway.stop()
             .catch((error) => {
-                console.warn('[humanclaw-gateway] 状态目录切换时关闭旧 Gateway 失败：', error.message || error);
+                console.warn('[ailis-gateway] 状态目录切换时关闭旧 Gateway 失败：', error.message || error);
             })
             .finally(() => {
-                void ensureHumanClawGateway().start().catch((error) => {
-                    console.warn('[humanclaw-gateway] 状态目录切换后启动失败：', error.message || error);
+                void ensureAILISGatewayStarted('state_dir_changed').catch((error) => {
+                    console.warn('[ailis-gateway] 状态目录切换后启动失败：', error.message || error);
                 });
             });
     }
@@ -2639,25 +2964,16 @@ function buildPetScaleMenu() {
 }
 
 function getSpeechModeLabel(mode) {
-    if (mode === 'cosyvoice3') {
-        return 'CosyVoice3 本地高质量';
-    }
-    if (mode === 'kokoro') {
-        return 'Kokoro-82M 最低延迟';
-    }
-    if (mode === 'vits') {
-        return '本地 VITS 实验模型';
-    }
-    if (mode === 'server') {
-        return 'ElevenLabs 顶级音质';
-    }
-    if (mode === 'local') {
-        return '浏览器 speechSynthesis';
-    }
     if (mode === 'off') {
         return '关闭语音';
     }
-    return '浏览器 speechSynthesis';
+    if (mode === 'server') {
+        return 'ElevenLabs 云端语音';
+    }
+    if (mode === 'cosyvoice3') {
+        return 'CosyVoice3 本地高质量';
+    }
+    return '关闭语音';
 }
 
 function buildControlMenuTemplate({ includeTaskbarToggle = false } = {}) {
@@ -2793,7 +3109,7 @@ function createPetWindow() {
         alwaysOnTop: true,
         skipTaskbar: desktopState.preferences.petSkipTaskbar,
         show: Boolean(petState.visible),
-        title: 'HumanClaw Pet'
+        title: 'AILIS Pet'
     });
 
     desktopPlatformAdapter.applyWindowBehavior(petWindow, {
@@ -2855,7 +3171,7 @@ function createChatWindow() {
         show: false,
         skipTaskbar: false,
         alwaysOnTop: true,
-        title: 'HumanClaw Chat'
+        title: 'AILIS Chat'
     });
 
     openExternalLinks(chatWindow);
@@ -2908,10 +3224,10 @@ function createControlWindow(options = {}) {
         resizable: true,
         show: false,
         skipTaskbar: false,
-        title: 'HumanClaw Control Panel'
+        title: 'AILIS Control Panel'
     });
-    controlWindow.__aigrilDidFinishLoad = false;
-    controlWindow.__aigrilShowWhenReady = showWhenReady;
+    controlWindow.__ailisDidFinishLoad = false;
+    controlWindow.__ailisShowWhenReady = showWhenReady;
     console.log('[window:control] create', {
         bounds: controlBounds,
         showWhenReady
@@ -2942,8 +3258,8 @@ function createControlWindow(options = {}) {
             if (!controlWindow || controlWindow.isDestroyed()) {
                 return;
             }
-            controlWindow.__aigrilDidFinishLoad = true;
-            if (controlWindow.__aigrilShowWhenReady) {
+            controlWindow.__ailisDidFinishLoad = true;
+            if (controlWindow.__ailisShowWhenReady) {
                 controlWindow.show();
                 controlWindow.focus();
             }
@@ -2981,10 +3297,10 @@ function createAgentLabWindow(options = {}) {
         resizable: true,
         show: false,
         skipTaskbar: false,
-        title: 'HumanClaw Agent Analysis Lab'
+        title: 'AILIS Agent Analysis Lab'
     });
-    agentLabWindow.__aigrilDidFinishLoad = false;
-    agentLabWindow.__aigrilShowWhenReady = showWhenReady;
+    agentLabWindow.__ailisDidFinishLoad = false;
+    agentLabWindow.__ailisShowWhenReady = showWhenReady;
     console.log('[window:agent-lab] create', {
         bounds,
         showWhenReady
@@ -3014,8 +3330,8 @@ function createAgentLabWindow(options = {}) {
             if (!agentLabWindow || agentLabWindow.isDestroyed()) {
                 return;
             }
-            agentLabWindow.__aigrilDidFinishLoad = true;
-            if (agentLabWindow.__aigrilShowWhenReady) {
+            agentLabWindow.__ailisDidFinishLoad = true;
+            if (agentLabWindow.__ailisShowWhenReady) {
                 agentLabWindow.show();
                 agentLabWindow.focus();
             }
@@ -3051,7 +3367,7 @@ function refreshTrayMenu() {
     ]);
 
     tray.setContextMenu(menu);
-    tray.setToolTip('HumanClaw 桌宠');
+    tray.setToolTip('AILIS 桌宠');
 }
 
 function createTray() {
@@ -3093,10 +3409,10 @@ function restoreDefaultPreferences() {
     });
 }
 
-async function chooseHumanClawStateDir() {
+async function chooseAILISStateDir() {
     const result = await dialog.showOpenDialog(controlWindow || BrowserWindow.getFocusedWindow() || petWindow, {
-        title: '选择 HumanClaw 本地状态目录',
-        defaultPath: getPersistedHumanClawStateDir(),
+        title: '选择 AILIS 本地状态目录',
+        defaultPath: getPersistedAILISStateDir(),
         properties: ['openDirectory', 'createDirectory']
     });
     if (result.canceled || !result.filePaths?.[0]) {
@@ -3113,7 +3429,7 @@ async function chooseHumanClawStateDir() {
 
 async function chooseChatFiles(sourceWindow = null) {
     const result = await dialog.showOpenDialog(sourceWindow || chatWindow || BrowserWindow.getFocusedWindow() || petWindow, {
-        title: '选择要交给 AIGL 的文件',
+        title: '选择要交给 AILIS 的文件',
         properties: ['openFile', 'multiSelections'],
         filters: [
             { name: '所有文件', extensions: ['*'] }
@@ -3130,68 +3446,88 @@ async function chooseChatFiles(sourceWindow = null) {
 }
 
 function registerIpc() {
-    ipcMain.on('aigril:get-preferences-sync', (event) => {
+    ipcMain.on('ailis:get-preferences-sync', (event) => {
         event.returnValue = getRendererPreferences();
     });
 
-    ipcMain.handle('aigril:get-control-panel-state', () => getControlPanelState());
-    ipcMain.handle('aigril:save-preferences', (_event, payload = {}) => applyPreferencesPatch(payload));
-    ipcMain.handle('aigril:restore-default-preferences', () => restoreDefaultPreferences());
-    ipcMain.handle('aigril:choose-humanclaw-state-dir', () => chooseHumanClawStateDir());
-    ipcMain.handle('aigril:chat-files-choose', (event) =>
+    ipcMain.handle('ailis:get-control-panel-state', () => getControlPanelState());
+    ipcMain.handle('ailis:save-preferences', (_event, payload = {}) => applyPreferencesPatch(payload));
+    ipcMain.handle('ailis:restore-default-preferences', () => restoreDefaultPreferences());
+    ipcMain.handle('ailis:choose-ailis-state-dir', () => chooseAILISStateDir());
+    ipcMain.handle('ailis:chat-files-choose', (event) =>
         chooseChatFiles(BrowserWindow.fromWebContents(event.sender))
     );
-    ipcMain.handle('aigril:chat-files-describe', async (_event, payload = {}) =>
+    ipcMain.handle('ailis:chat-files-describe', async (_event, payload = {}) =>
         describeChatFilePaths(payload?.paths || payload?.filePaths || [])
     );
-    ipcMain.handle('aigril:toggle-chat-window', () => toggleChatWindow());
-    ipcMain.handle('aigril:show-chat-window', () => {
+    ipcMain.handle('ailis:toggle-chat-window', () => toggleChatWindow());
+    ipcMain.handle('ailis:show-chat-window', () => {
         showChatWindow();
         return true;
     });
-    ipcMain.handle('aigril:hide-chat-window', () => {
+    ipcMain.handle('ailis:hide-chat-window', () => {
         hideChatWindow();
         return false;
     });
-    ipcMain.handle('aigril:show-control-panel', () => showControlPanel());
-    ipcMain.handle('aigril:show-agent-lab', () => showAgentLabWindow());
-    ipcMain.handle('aigril:show-control-menu', (event) => {
+    ipcMain.handle('ailis:show-control-panel', () => showControlPanel());
+    ipcMain.handle('ailis:show-agent-lab', () => showAgentLabWindow());
+    ipcMain.handle('ailis:show-control-menu', (event) => {
         const sourceWindow = BrowserWindow.fromWebContents(event.sender);
         return showControlMenu(sourceWindow || petWindow);
     });
-    ipcMain.handle('aigril:show-text-edit-menu', (event, payload = {}) => {
+    ipcMain.handle('ailis:show-text-edit-menu', (event, payload = {}) => {
         const sourceWindow = BrowserWindow.fromWebContents(event.sender);
         return showTextEditMenu(sourceWindow || BrowserWindow.getFocusedWindow(), payload || {});
     });
-    ipcMain.handle('aigril:close-current-window', (event) => {
+    ipcMain.handle('ailis:close-current-window', (event) => {
         const sourceWindow = BrowserWindow.fromWebContents(event.sender);
         sourceWindow?.hide();
         return true;
     });
-    ipcMain.handle('aigril:set-speech-mode', (_event, mode) => updateSpeechMode(mode));
-    ipcMain.handle('aigril:set-recognition-mode', (_event, mode) => updateRecognitionMode(mode));
-    ipcMain.handle('aigril:set-preferred-mic-device', (_event, deviceId) => updatePreferredMicDevice(deviceId));
-    ipcMain.handle('aigril:set-pet-dialogue-expanded', (_event, payload = {}) =>
+    ipcMain.handle('ailis:set-speech-mode', (_event, mode) => updateSpeechMode(mode));
+    ipcMain.handle('ailis:set-recognition-mode', (_event, mode) => updateRecognitionMode(mode));
+    ipcMain.handle('ailis:set-preferred-mic-device', (_event, deviceId) => updatePreferredMicDevice(deviceId));
+    ipcMain.handle('ailis:voice-runtime-diagnose', async () =>
+        getVoiceRuntimeBootstrap().diagnose()
+    );
+    ipcMain.handle('ailis:voice-runtime-status', async () =>
+        getVoiceRuntimeBootstrap().getBootstrapStatus()
+    );
+    ipcMain.handle('ailis:voice-runtime-bootstrap', async (_event, payload = {}) =>
+        bootstrapVoiceRuntime(payload || {})
+    );
+    ipcMain.handle('ailis:set-pet-dialogue-expanded', (_event, payload = {}) =>
         setPetDialogueWindowExpanded(
             Boolean(payload.expanded),
             payload.extraTop,
             payload.extraWidth
         )
     );
-    ipcMain.handle('aigril:vision-capture', async (event, payload = {}) =>
+    ipcMain.handle('ailis:vision-capture', async (event, payload = {}) =>
         captureVisionSnapshot(event, payload)
     );
-    ipcMain.handle('aigril:llm-health-check', async (_event, payload = {}) => {
+    ipcMain.handle('ailis:llm-health-check', async (_event, payload = {}) => {
         const currentSettings = getResolvedLlmSettings();
         const incomingSettings = payload?.settings || {};
+        const incomingProvider = normalizeLlmProvider(
+            incomingSettings.provider ||
+                incomingSettings.llmProvider ||
+                currentSettings.provider
+        );
+        const incomingApiKey = normalizeLlmApiKey(
+            incomingSettings.apiKey ||
+                incomingSettings.llmApiKey ||
+                ''
+        );
+        const fallbackApiKey = isLocalLlmProvider(incomingProvider)
+            ? getEnvironmentLlmApiKey(incomingProvider)
+            : currentSettings.apiKey;
         const settings = payload?.settings
             ? buildTemporaryLlmSettings({
                 ...currentSettings,
                 ...incomingSettings,
-                apiKey: incomingSettings.apiKey ||
-                    incomingSettings.llmApiKey ||
-                    currentSettings.apiKey ||
-                    ''
+                provider: incomingProvider,
+                apiKey: incomingApiKey || fallbackApiKey || ''
             })
             : getResolvedLlmSettings();
         return checkDesktopLlmProvider(settings, {
@@ -3200,117 +3536,142 @@ function registerIpc() {
             timeoutMs: payload?.timeoutMs || settings.timeoutMs
         });
     });
-    ipcMain.handle('aigril:memory-snapshot', async (_event, payload = {}) =>
-        ensureHumanClawGateway().getMemorySnapshot(payload || {})
+    ipcMain.handle('ailis:vllm-model-catalog-search', async (_event, payload = {}) =>
+        searchVllmModelCatalog(payload || {})
     );
-    ipcMain.handle('aigril:memory-search', async (_event, payload = {}) =>
-        ensureHumanClawGateway().searchMemory(payload.query || payload.text || '', payload || {})
+    ipcMain.handle('ailis:vllm-runtime-diagnose', async (_event, payload = {}) =>
+        getVllmLocalDeployer().diagnose(payload || {})
     );
-    ipcMain.handle('aigril:memory-update-block', async (_event, payload = {}) =>
-        ensureHumanClawGateway().updateMemoryBlock(payload.key || '', payload.value || payload.content || '')
+    ipcMain.handle('ailis:vllm-runtime-status', async () =>
+        getVllmLocalDeployer().getStatus()
     );
-    ipcMain.handle('aigril:memory-reset-affinity', async (_event, payload = {}) =>
-        ensureHumanClawGateway().resetMemoryAffinity(payload.score)
+    ipcMain.handle('ailis:vllm-runtime-deploy', async (_event, payload = {}) =>
+        getVllmLocalDeployer().start(payload || {})
     );
-    ipcMain.handle('aigril:memory-forget', async (_event, payload = {}) =>
-        ensureHumanClawGateway().forgetMemory(payload || {})
+    ipcMain.handle('ailis:vllm-runtime-cancel', async () =>
+        getVllmLocalDeployer().cancel()
     );
-    ipcMain.handle('aigril:memory-save-secret', async (_event, payload = {}) =>
-        ensureHumanClawGateway().saveMemorySecret(payload || {})
+    ipcMain.handle('ailis:memory-snapshot', async (_event, payload = {}) =>
+        ensureAILISGateway().getMemorySnapshot(payload || {})
     );
-    ipcMain.handle('aigril:memory-delete-secret', async (_event, payload = {}) =>
-        ensureHumanClawGateway().deleteMemorySecret(payload.name || payload.id || '')
+    ipcMain.handle('ailis:memory-search', async (_event, payload = {}) =>
+        ensureAILISGateway().searchMemory(payload.query || payload.text || '', payload || {})
     );
-    ipcMain.on('aigril:vision-region-selected', (event, payload = {}) => {
+    ipcMain.handle('ailis:memory-update-block', async (_event, payload = {}) =>
+        ensureAILISGateway().updateMemoryBlock(payload.key || '', payload.value || payload.content || '')
+    );
+    ipcMain.handle('ailis:memory-reset-affinity', async (_event, payload = {}) =>
+        ensureAILISGateway().resetMemoryAffinity(payload.score)
+    );
+    ipcMain.handle('ailis:memory-clear', async (_event, payload = {}) =>
+        ensureAILISGateway().clearMemory(payload || {})
+    );
+    ipcMain.handle('ailis:memory-forget', async (_event, payload = {}) =>
+        ensureAILISGateway().forgetMemory(payload || {})
+    );
+    ipcMain.handle('ailis:memory-save-secret', async (_event, payload = {}) =>
+        ensureAILISGateway().saveMemorySecret(payload || {})
+    );
+    ipcMain.handle('ailis:memory-delete-secret', async (_event, payload = {}) =>
+        ensureAILISGateway().deleteMemorySecret(payload.name || payload.id || '')
+    );
+    ipcMain.on('ailis:vision-region-selected', (event, payload = {}) => {
         completeVisionRegionSelection(event, payload.selection || payload);
     });
-    ipcMain.on('aigril:vision-region-cancelled', (event) => {
+    ipcMain.on('ailis:vision-region-cancelled', (event) => {
         cancelVisionRegionSelection(event);
     });
-    ipcMain.handle('aigril:llm-chat', async (_event, payload = {}) => callDesktopLlm(payload));
-    ipcMain.handle('aigril:tts-synthesize', async (_event, payload = {}) => callDesktopTts(payload));
-    ipcMain.handle('aigril:asr-transcribe', async (_event, audioBytes) => {
+    ipcMain.handle('ailis:llm-chat', async (_event, payload = {}) => callDesktopLlm(payload));
+    ipcMain.handle('ailis:tts-synthesize', async (_event, payload = {}) => callDesktopTts(payload));
+    ipcMain.handle('ailis:asr-transcribe', async (_event, audioBytes) => {
         if (!desktopASRManager) {
             throw new Error('本地语音识别管理器尚未初始化');
         }
 
         return desktopASRManager.transcribeAudioBytes(audioBytes);
     });
-    ipcMain.handle('aigril:assistant-status', async () => getAssistantStatusSnapshot());
-    ipcMain.handle('aigril:assistant-tool-surface', async () => getOpenClawToolSurface());
-    ipcMain.handle('aigril:assistant-validate-tool-surface', async () => validateOpenClawToolSurface());
-    ipcMain.handle('aigril:assistant-history', async (_event, payload = {}) => {
+    ipcMain.handle('ailis:assistant-status', async () => getAssistantStatusSnapshot());
+    ipcMain.handle('ailis:assistant-tool-surface', async () => getOpenClawToolSurface());
+    ipcMain.handle('ailis:assistant-validate-tool-surface', async () => validateOpenClawToolSurface());
+    ipcMain.handle('ailis:assistant-history', async (_event, payload = {}) => {
         await syncOpenClawSelection({ ensureReady: true });
         return ensureAssistantGateway().getHistory(Number(payload.limit) || 200);
     });
-    ipcMain.handle('aigril:assistant-send-message', async (_event, payload = {}) => {
+    ipcMain.handle('ailis:assistant-send-message', async (_event, payload = {}) => {
         await syncOpenClawSelection({ ensureReady: true });
         return ensureAssistantGateway().sendMessage(payload.content || '', {
             timeoutMs: Number(payload.timeoutMs) || undefined
         });
     });
-    ipcMain.handle('aigril:assistant-abort-run', async (_event, payload = {}) => {
+    ipcMain.handle('ailis:assistant-abort-run', async (_event, payload = {}) => {
         await syncOpenClawSelection({ ensureReady: true });
         return ensureAssistantGateway().abortRun(payload.runId || '');
     });
-    ipcMain.handle('aigril:assistant-list-sessions', async (_event, payload = {}) => {
+    ipcMain.handle('ailis:assistant-list-sessions', async (_event, payload = {}) => {
         await syncOpenClawSelection({ ensureReady: true });
         return ensureAssistantGateway().listSessions(Number(payload.limit) || 20);
     });
-    ipcMain.handle('aigril:assistant-set-session-key', async (_event, payload = {}) => {
+    ipcMain.handle('ailis:assistant-set-session-key', async (_event, payload = {}) => {
         await syncOpenClawSelection({ ensureReady: true });
         return ensureAssistantGateway().setSessionKey(payload.sessionKey || '');
     });
-    ipcMain.handle('aigril:assistant-patch-session', async (_event, payload = {}) => {
+    ipcMain.handle('ailis:assistant-patch-session', async (_event, payload = {}) => {
         await syncOpenClawSelection({ ensureReady: true });
         return ensureAssistantGateway().patchSession(payload || {});
     });
-    ipcMain.handle('aigril:gateway-status', async () => ensureHumanClawGateway().getStatus());
-    ipcMain.handle('aigril:gateway-tools-list', async () => ensureHumanClawGateway().listTools());
-    ipcMain.handle('aigril:gateway-tools-call', async (_event, payload = {}) =>
-        ensureHumanClawGateway().callTool(payload || {})
+    ipcMain.handle('ailis:gateway-status', async () =>
+        getAILISGatewayStatusEnsuringStarted('status_request')
     );
-    ipcMain.handle('aigril:gateway-agent-run', async (_event, payload = {}) =>
-        ensureHumanClawGateway().runAgent({
+    ipcMain.handle('ailis:gateway-tools-list', async () => {
+        await ensureAILISGatewayStarted('tools_list');
+        return ensureAILISGateway().listTools();
+    });
+    ipcMain.handle('ailis:gateway-tools-call', async (_event, payload = {}) => {
+        await ensureAILISGatewayStarted('tool_call');
+        return ensureAILISGateway().callTool(payload || {});
+    });
+    ipcMain.handle('ailis:gateway-agent-run', async (_event, payload = {}) => {
+        await ensureAILISGatewayStarted('agent_run');
+        return ensureAILISGateway().runAgent({
             ...(payload || {}),
             llmSettings: payload?.llmSettings || getResolvedLlmSettings()
-        })
+        });
+    });
+    ipcMain.handle('ailis:gateway-agent-interrupt', async (_event, payload = {}) =>
+        ensureAILISGateway().interruptAgentRun(payload || {})
     );
-    ipcMain.handle('aigril:gateway-agent-interrupt', async (_event, payload = {}) =>
-        ensureHumanClawGateway().interruptAgentRun(payload || {})
-    );
-    ipcMain.handle('aigril:gateway-audit-list', async (_event, payload = {}) => ({
+    ipcMain.handle('ailis:gateway-audit-list', async (_event, payload = {}) => ({
         ok: true,
-        entries: await ensureHumanClawGateway().readAuditEntries(Number(payload.limit) || 100)
+        entries: await ensureAILISGateway().readAuditEntries(Number(payload.limit) || 100)
     }));
-    ipcMain.handle('aigril:agent-lab-runs', async (_event, payload = {}) =>
-        ensureHumanClawGateway().listAgentAnalysisRuns(Number(payload.limit) || 40)
+    ipcMain.handle('ailis:agent-lab-runs', async (_event, payload = {}) =>
+        ensureAILISGateway().listAgentAnalysisRuns(Number(payload.limit) || 40)
     );
-    ipcMain.handle('aigril:agent-lab-analysis', async (_event, payload = {}) =>
-        ensureHumanClawGateway().analyzeAgentRun(payload.runId || '', {
+    ipcMain.handle('ailis:agent-lab-analysis', async (_event, payload = {}) =>
+        ensureAILISGateway().analyzeAgentRun(payload.runId || '', {
             transcriptLimit: Number(payload.transcriptLimit || payload.limit || 2000)
         })
     );
-    ipcMain.handle('aigril:agent-lab-run', async (_event, payload = {}) =>
-        ensureHumanClawGateway().runAgentAnalysis({
+    ipcMain.handle('ailis:agent-lab-run', async (_event, payload = {}) =>
+        ensureAILISGateway().runAgentAnalysis({
             ...(payload || {}),
             llmSettings: payload?.llmSettings || getResolvedLlmSettings()
         })
     );
-    ipcMain.handle('aigril:agent-lab-continue', async (_event, payload = {}) =>
-        ensureHumanClawGateway().continueAgentAnalysis({
+    ipcMain.handle('ailis:agent-lab-continue', async (_event, payload = {}) =>
+        ensureAILISGateway().continueAgentAnalysis({
             ...(payload || {}),
             llmSettings: payload?.llmSettings || getResolvedLlmSettings()
         })
     );
-    ipcMain.handle('aigril:agent-lab-interrupt', async (_event, payload = {}) =>
-        ensureHumanClawGateway().interruptAgentRun({
+    ipcMain.handle('ailis:agent-lab-interrupt', async (_event, payload = {}) =>
+        ensureAILISGateway().interruptAgentRun({
             ...(payload || {}),
             source: payload?.source || 'agent-analysis-lab'
         })
     );
 
-    ipcMain.on('aigril:begin-drag-pet-window', (event) => {
+    ipcMain.on('ailis:begin-drag-pet-window', (event) => {
         const sourceWindow = BrowserWindow.fromWebContents(event.sender);
         if (!petWindow || sourceWindow !== petWindow) {
             return;
@@ -3331,7 +3692,7 @@ function registerIpc() {
         };
     });
 
-    ipcMain.on('aigril:drag-pet-window', (event, payload = {}) => {
+    ipcMain.on('ailis:drag-pet-window', (event, payload = {}) => {
         if (!petWindow) {
             return;
         }
@@ -3417,7 +3778,7 @@ function registerIpc() {
         desktopState.petWindow.visible = petWindow.isVisible();
     });
 
-    ipcMain.on('aigril:end-drag-pet-window', (event) => {
+    ipcMain.on('ailis:end-drag-pet-window', (event) => {
         const sourceWindow = BrowserWindow.fromWebContents(event.sender);
         if (sourceWindow && sourceWindow !== petWindow) {
             return;
@@ -3428,7 +3789,7 @@ function registerIpc() {
         }
     });
 
-    ipcMain.on('aigril:set-pet-mouse-passthrough', (event, payload = {}) => {
+    ipcMain.on('ailis:set-pet-mouse-passthrough', (event, payload = {}) => {
         const sourceWindow = BrowserWindow.fromWebContents(event.sender);
         if (!petWindow || sourceWindow !== petWindow) {
             return;
@@ -3436,23 +3797,23 @@ function registerIpc() {
         setPetMousePassthrough(Boolean(payload.enabled));
     });
 
-    ipcMain.on('aigril:chat-send-message', (_event, payload = {}) => {
-        petWindow?.webContents.send('aigril:chat-send-message', payload);
+    ipcMain.on('ailis:chat-send-message', (_event, payload = {}) => {
+        petWindow?.webContents.send('ailis:chat-send-message', payload);
         showChatWindow();
     });
 
-    ipcMain.on('aigril:chat-control', (_event, payload = {}) => {
-        petWindow?.webContents.send('aigril:chat-control', payload);
+    ipcMain.on('ailis:chat-control', (_event, payload = {}) => {
+        petWindow?.webContents.send('ailis:chat-control', payload);
     });
 
-    ipcMain.on('aigril:pet-chat-event', (_event, payload = {}) => {
+    ipcMain.on('ailis:pet-chat-event', (_event, payload = {}) => {
         if (chatWindow) {
-            chatWindow.webContents.send('aigril:chat-event', payload);
+            chatWindow.webContents.send('ailis:chat-event', payload);
         }
     });
 
-    ipcMain.on('aigril:chat-state-sync-request', () => {
-        petWindow?.webContents.send('aigril:chat-state-sync-request', {});
+    ipcMain.on('ailis:chat-state-sync-request', () => {
+        petWindow?.webContents.send('ailis:chat-state-sync-request', {});
     });
 }
 
@@ -3470,6 +3831,13 @@ if (!app.requestSingleInstanceLock()) {
 
 app.whenReady().then(() => {
     desktopState = loadDesktopState(app);
+    process.env.AILIS_PROJECT_ROOT = getProjectRoot();
+    process.env.AILIS_USER_DATA = app.getPath('userData');
+    configureCosyVoice3TTS({
+        projectRoot: getProjectRoot(),
+        userDataPath: app.getPath('userData'),
+        pythonPath: getVoiceRuntimeBootstrap().getPreferredVoicePythonPath()
+    });
     if (!desktopState.preferences.llmBaseUrl || desktopState.preferences.llmBaseUrl === 'https://api.openai.com/v1') {
         desktopState.preferences.llmBaseUrl = DEFAULT_LLM_BASE_URL;
     }
@@ -3516,14 +3884,42 @@ app.whenReady().then(() => {
     desktopState.preferences.elevenLabsModelId = normalizeElevenLabsModelId(
         desktopState.preferences.elevenLabsModelId || DEFAULT_ELEVENLABS_MODEL_ID
     );
+    desktopState.preferences.elevenLabsLanguageCode = normalizeElevenLabsLanguageCode(
+        desktopState.preferences.elevenLabsLanguageCode || DEFAULT_ELEVENLABS_LANGUAGE_CODE
+    );
     desktopState.preferences.elevenLabsOutputFormat = normalizeElevenLabsOutputFormat(
         desktopState.preferences.elevenLabsOutputFormat || DEFAULT_ELEVENLABS_OUTPUT_FORMAT
     );
     desktopState.preferences.elevenLabsTimeoutMs = normalizeElevenLabsTimeoutMs(
         desktopState.preferences.elevenLabsTimeoutMs || DEFAULT_ELEVENLABS_TIMEOUT_MS
     );
+    desktopState.preferences.elevenLabsOptimizeStreamingLatency = normalizeElevenLabsOptimizeStreamingLatency(
+        desktopState.preferences.elevenLabsOptimizeStreamingLatency ?? DEFAULT_ELEVENLABS_OPTIMIZE_STREAMING_LATENCY
+    );
+    desktopState.preferences.elevenLabsStability = normalizeElevenLabsStability(
+        desktopState.preferences.elevenLabsStability ?? DEFAULT_ELEVENLABS_STABILITY
+    );
+    desktopState.preferences.elevenLabsSimilarityBoost = normalizeElevenLabsSimilarityBoost(
+        desktopState.preferences.elevenLabsSimilarityBoost ?? DEFAULT_ELEVENLABS_SIMILARITY_BOOST
+    );
+    desktopState.preferences.elevenLabsStyle = normalizeElevenLabsStyle(
+        desktopState.preferences.elevenLabsStyle ?? DEFAULT_ELEVENLABS_STYLE
+    );
+    desktopState.preferences.elevenLabsSpeed = normalizeElevenLabsSpeed(
+        desktopState.preferences.elevenLabsSpeed ?? DEFAULT_ELEVENLABS_SPEED
+    );
+    desktopState.preferences.elevenLabsUseSpeakerBoost = normalizeElevenLabsUseSpeakerBoost(
+        desktopState.preferences.elevenLabsUseSpeakerBoost ?? DEFAULT_ELEVENLABS_USE_SPEAKER_BOOST
+    );
+    desktopState.preferences.elevenLabsVoiceProfiles = normalizeElevenLabsVoiceProfiles(
+        desktopState.preferences.elevenLabsVoiceProfiles,
+        desktopState.preferences
+    );
     desktopState.preferences.computerControlEnabled = normalizeComputerControlEnabled(
         desktopState.preferences.computerControlEnabled ?? DEFAULT_COMPUTER_CONTROL_ENABLED
+    );
+    desktopState.preferences.chunkedTtsEnabled = normalizeChunkedTtsEnabled(
+        desktopState.preferences.chunkedTtsEnabled ?? DEFAULT_CHUNKED_TTS_ENABLED
     );
     desktopState = saveDesktopState(app, desktopState);
     desktopASRManager = new DesktopASRManager({ app });
@@ -3532,8 +3928,8 @@ app.whenReady().then(() => {
     protocol.handle(LOCAL_RESOURCE_PROTOCOL, handleLocalResourceProtocol);
     protocol.handle(SPEECH_MODEL_PROTOCOL, handleSpeechModelProtocol);
     registerIpc();
-    void ensureHumanClawGateway().start().catch((error) => {
-        console.warn('[humanclaw-gateway] 启动失败：', error.message || error);
+    void ensureAILISGatewayStarted('app_ready').catch((error) => {
+        console.warn('[ailis-gateway] 启动失败：', error.message || error);
     });
     createPetWindow();
     createChatWindow();
@@ -3550,9 +3946,7 @@ app.whenReady().then(() => {
 
     const initialSpeechMode = normalizeSpeechMode(desktopState?.preferences?.speechMode);
     warmupDesktopSpeechMode(initialSpeechMode, {
-        delayMs: initialSpeechMode === 'kokoro'
-            ? KOKORO_WARMUP_DELAY_MS
-            : COSYVOICE3_WARMUP_DELAY_MS
+        delayMs: COSYVOICE3_WARMUP_DELAY_MS
     });
 
     app.on('activate', () => {
@@ -3582,10 +3976,9 @@ app.on('before-quit', () => {
     gatewayShutdown?.catch?.(() => {});
     const runtimeShutdown = openclawRuntimeSupervisor?.shutdown?.();
     runtimeShutdown?.catch?.(() => {});
-    const humanGatewayShutdown = humanClawGateway?.stop?.();
+    const humanGatewayShutdown = ailisGateway?.stop?.();
     humanGatewayShutdown?.catch?.(() => {});
     closeCosyVoice3TTS();
-    closeKokoroTTS();
 });
 
 app.on('will-quit', () => {

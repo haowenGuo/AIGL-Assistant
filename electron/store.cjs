@@ -3,22 +3,22 @@ const path = require('path');
 const { screen } = require('electron');
 
 const STATE_FILE_NAME = 'desktop-state.json';
-const STATE_VERSION = 24;
+const STATE_VERSION = 26;
 // Transparent Electron frame size. Avatar visual size is compensated in the pet renderer.
 const PET_BASE_WIDTH = 720;
 const PET_BASE_HEIGHT = 960;
 const PET_SCALE_OPTIONS = [0.3, 0.4, 0.5, 0.6, 0.7, 0.85, 1, 1.15, 1.3];
 const DEFAULT_PET_SCALE = 0.85;
-const SPEECH_MODE_OPTIONS = ['cosyvoice3', 'kokoro', 'local', 'server', 'vits', 'off'];
-const RECOGNITION_MODE_OPTIONS = ['auto-vad', 'continuous', 'manual'];
+const SPEECH_MODE_OPTIONS = ['off', 'server', 'cosyvoice3'];
+const RECOGNITION_MODE_OPTIONS = ['fast-vad', 'auto-vad', 'continuous', 'manual'];
 const CONVERSATION_MODE_OPTIONS = ['assistant', 'daily'];
 const DEFAULT_CONVERSATION_MODE = 'assistant';
-const BACKEND_MODE_OPTIONS = ['humanclaw'];
+const BACKEND_MODE_OPTIONS = ['ailis'];
 const DEFAULT_BACKEND_BASE_URL = '';
-const DEFAULT_BACKEND_MODE = 'humanclaw';
+const DEFAULT_BACKEND_MODE = 'ailis';
 const DEFAULT_OPENCLAW_GATEWAY_URL = 'ws://127.0.0.1:19011';
-const DEFAULT_HUMANCLAW_STATE_DIR = '';
-const LLM_PROVIDER_OPTIONS = ['openai-compatible', 'openai-responses', 'anthropic', 'gemini'];
+const DEFAULT_AILIS_STATE_DIR = '';
+const LLM_PROVIDER_OPTIONS = ['openai-compatible', 'openai-responses', 'anthropic', 'gemini', 'vllm', 'ollama'];
 const DEFAULT_LLM_PROVIDER = 'openai-compatible';
 const DEFAULT_LLM_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 const DEFAULT_LLM_MODEL = 'doubao-seed-2-0-mini-260215';
@@ -26,13 +26,17 @@ const LLM_PROVIDER_DEFAULT_BASE_URLS = Object.freeze({
     'openai-compatible': DEFAULT_LLM_BASE_URL,
     'openai-responses': 'https://api.openai.com/v1',
     anthropic: 'https://api.anthropic.com',
-    gemini: 'https://generativelanguage.googleapis.com/v1beta'
+    gemini: 'https://generativelanguage.googleapis.com/v1beta',
+    vllm: 'http://127.0.0.1:8000/v1',
+    ollama: 'http://127.0.0.1:11434'
 });
 const LLM_PROVIDER_DEFAULT_MODELS = Object.freeze({
     'openai-compatible': DEFAULT_LLM_MODEL,
     'openai-responses': 'gpt-4.1-mini',
     anthropic: 'claude-3-5-haiku-latest',
-    gemini: 'gemini-2.0-flash'
+    gemini: 'gemini-2.0-flash',
+    vllm: 'Qwen/Qwen2.5-7B-Instruct',
+    ollama: 'llama3.2'
 });
 const DEFAULT_LLM_API_KEY = '';
 const DEFAULT_LLM_TEMPERATURE = 0.8;
@@ -41,20 +45,66 @@ const DEFAULT_ELEVENLABS_API_BASE = 'https://api.elevenlabs.io';
 const DEFAULT_ELEVENLABS_API_KEY = '';
 const DEFAULT_ELEVENLABS_VOICE_ID = '';
 const DEFAULT_ELEVENLABS_MODEL_ID = 'eleven_multilingual_v2';
+const DEFAULT_ELEVENLABS_LANGUAGE_CODE = 'zh';
 const DEFAULT_ELEVENLABS_OUTPUT_FORMAT = 'mp3_44100_128';
 const DEFAULT_ELEVENLABS_TIMEOUT_MS = 60000;
+const DEFAULT_ELEVENLABS_OPTIMIZE_STREAMING_LATENCY = 0;
+const DEFAULT_ELEVENLABS_STABILITY = 0.58;
+const DEFAULT_ELEVENLABS_SIMILARITY_BOOST = 0.78;
+const DEFAULT_ELEVENLABS_STYLE = 0.05;
+const DEFAULT_ELEVENLABS_SPEED = 0.9;
+const DEFAULT_ELEVENLABS_USE_SPEAKER_BOOST = true;
+const ELEVENLABS_LANGUAGE_CODES = ['zh', 'en', 'ja'];
+const DEFAULT_ELEVENLABS_VOICE_PROFILES = Object.freeze({
+    zh: Object.freeze({
+        voiceId: DEFAULT_ELEVENLABS_VOICE_ID,
+        modelId: DEFAULT_ELEVENLABS_MODEL_ID,
+        languageCode: 'zh',
+        outputFormat: DEFAULT_ELEVENLABS_OUTPUT_FORMAT,
+        optimizeStreamingLatency: 0,
+        stability: 0.58,
+        similarityBoost: 0.78,
+        style: 0.05,
+        speed: 0.9,
+        useSpeakerBoost: true
+    }),
+    en: Object.freeze({
+        voiceId: DEFAULT_ELEVENLABS_VOICE_ID,
+        modelId: DEFAULT_ELEVENLABS_MODEL_ID,
+        languageCode: 'en',
+        outputFormat: DEFAULT_ELEVENLABS_OUTPUT_FORMAT,
+        optimizeStreamingLatency: 0,
+        stability: 0.55,
+        similarityBoost: 0.8,
+        style: 0.08,
+        speed: 0.92,
+        useSpeakerBoost: true
+    }),
+    ja: Object.freeze({
+        voiceId: DEFAULT_ELEVENLABS_VOICE_ID,
+        modelId: DEFAULT_ELEVENLABS_MODEL_ID,
+        languageCode: 'ja',
+        outputFormat: DEFAULT_ELEVENLABS_OUTPUT_FORMAT,
+        optimizeStreamingLatency: 0,
+        stability: 0.52,
+        similarityBoost: 0.78,
+        style: 0.08,
+        speed: 0.88,
+        useSpeakerBoost: true
+    })
+});
 const DEFAULT_COMPUTER_CONTROL_ENABLED = true;
 const DEFAULT_CAMERA_DISTANCE = 1.1;
 const DEFAULT_CAMERA_HEIGHT = 1.3;
 const DEFAULT_CAMERA_TARGET_Y = 1;
 const RENDER_PROFILE_OPTIONS = [
-    'aigl_soft_anime_mtoon',
-    'aigl_bright_companion_mtoon',
-    'aigl_cinematic_rim_toon',
-    'aigl_material_hybrid_npr',
-    'aigl_hard_cel_mtoon'
+    'ailis_soft_anime_mtoon',
+    'ailis_bright_companion_mtoon',
+    'ailis_cinematic_rim_toon',
+    'ailis_material_hybrid_npr',
+    'ailis_hard_cel_mtoon'
 ];
-const DEFAULT_RENDER_PROFILE_ID = 'aigl_soft_anime_mtoon';
+const DEFAULT_RENDER_PROFILE_ID = 'ailis_soft_anime_mtoon';
 const DEFAULT_RENDER_LIGHT_YAW_DEG = 0;
 const DEFAULT_RENDER_KEY_LIGHT_SCALE = 1;
 const DEFAULT_RENDER_AMBIENT_FILL_SCALE = 1;
@@ -67,15 +117,16 @@ const DEFAULT_RENDER_OUTLINE_ENABLED = true;
 const DEFAULT_RENDER_ANTIALIAS_ENABLED = true;
 const RENDER_FPS_LIMIT_OPTIONS = [24, 30, 45, 60];
 const LEGACY_RENDER_PROFILE_ID_ALIASES = Object.freeze({
-    aigl_soft_genshin_base: 'aigl_soft_anime_mtoon',
-    aigl_bright_companion: 'aigl_bright_companion_mtoon',
-    aigl_wuwa_cinematic: 'aigl_cinematic_rim_toon',
-    aigl_endfield_hybrid: 'aigl_material_hybrid_npr',
-    aigl_cel_anime_hard: 'aigl_hard_cel_mtoon'
+    ailis_soft_genshin_base: 'ailis_soft_anime_mtoon',
+    ailis_bright_companion: 'ailis_bright_companion_mtoon',
+    ailis_wuwa_cinematic: 'ailis_cinematic_rim_toon',
+    ailis_endfield_hybrid: 'ailis_material_hybrid_npr',
+    ailis_cel_anime_hard: 'ailis_hard_cel_mtoon'
 });
 const DEFAULT_DESKTOP_NATIVE_TTS_RATE = 0.96;
 const DEFAULT_DESKTOP_NATIVE_TTS_PITCH = 1.12;
 const DEFAULT_DESKTOP_NATIVE_TTS_VOLUME = 1;
+const DEFAULT_CHUNKED_TTS_ENABLED = true;
 const DEFAULT_AUTO_CHAT_ENABLED = false;
 const DEFAULT_AUTO_CHAT_MIN_INTERVAL_SEC = 60;
 const DEFAULT_AUTO_CHAT_MAX_INTERVAL_SEC = 120;
@@ -160,7 +211,7 @@ function normalizeOpenClawGatewayUrl(value) {
     return `ws://${normalizedValue}`;
 }
 
-function normalizeHumanClawStateDir(value) {
+function normalizeAILISStateDir(value) {
     return String(value || '').trim().replace(/^["']|["']$/g, '');
 }
 
@@ -203,6 +254,14 @@ function normalizeElevenLabsModelId(value) {
     return normalizedValue || DEFAULT_ELEVENLABS_MODEL_ID;
 }
 
+function normalizeElevenLabsLanguageCode(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    if (['zh', 'en', 'ja'].includes(normalizedValue)) {
+        return normalizedValue;
+    }
+    return DEFAULT_ELEVENLABS_LANGUAGE_CODE;
+}
+
 function normalizeElevenLabsOutputFormat(value) {
     const normalizedValue = String(value || '').trim();
     return normalizedValue || DEFAULT_ELEVENLABS_OUTPUT_FORMAT;
@@ -210,6 +269,109 @@ function normalizeElevenLabsOutputFormat(value) {
 
 function normalizeElevenLabsTimeoutMs(value) {
     return Math.round(clampNumber(value, 5000, 120000, DEFAULT_ELEVENLABS_TIMEOUT_MS, 0));
+}
+
+function normalizeElevenLabsOptimizeStreamingLatency(value) {
+    return Math.round(clampNumber(
+        value,
+        0,
+        4,
+        DEFAULT_ELEVENLABS_OPTIMIZE_STREAMING_LATENCY,
+        0
+    ));
+}
+
+function normalizeElevenLabsStability(value) {
+    return clampNumber(value, 0, 1, DEFAULT_ELEVENLABS_STABILITY, 2);
+}
+
+function normalizeElevenLabsSimilarityBoost(value) {
+    return clampNumber(value, 0, 1, DEFAULT_ELEVENLABS_SIMILARITY_BOOST, 2);
+}
+
+function normalizeElevenLabsStyle(value) {
+    return clampNumber(value, 0, 1, DEFAULT_ELEVENLABS_STYLE, 2);
+}
+
+function normalizeElevenLabsSpeed(value) {
+    return clampNumber(value, 0.7, 1.2, DEFAULT_ELEVENLABS_SPEED, 2);
+}
+
+function normalizeElevenLabsUseSpeakerBoost(value) {
+    return normalizeBoolean(value, DEFAULT_ELEVENLABS_USE_SPEAKER_BOOST);
+}
+
+function normalizeElevenLabsVoiceProfile(value = {}, languageCode = DEFAULT_ELEVENLABS_LANGUAGE_CODE, fallback = {}) {
+    const normalizedLanguageCode = normalizeElevenLabsLanguageCode(languageCode);
+    const defaults = DEFAULT_ELEVENLABS_VOICE_PROFILES[normalizedLanguageCode] ||
+        DEFAULT_ELEVENLABS_VOICE_PROFILES.zh;
+    const source = value && typeof value === 'object' ? value : {};
+    const fallbackSource = fallback && typeof fallback === 'object' ? fallback : {};
+
+    return {
+        voiceId: normalizeElevenLabsVoiceId(source.voiceId || fallbackSource.voiceId || defaults.voiceId),
+        modelId: normalizeElevenLabsModelId(source.modelId || fallbackSource.modelId || defaults.modelId),
+        languageCode: normalizedLanguageCode,
+        outputFormat: normalizeElevenLabsOutputFormat(
+            source.outputFormat || fallbackSource.outputFormat || defaults.outputFormat
+        ),
+        optimizeStreamingLatency: normalizeElevenLabsOptimizeStreamingLatency(
+            source.optimizeStreamingLatency ??
+                fallbackSource.optimizeStreamingLatency ??
+                defaults.optimizeStreamingLatency
+        ),
+        stability: normalizeElevenLabsStability(source.stability ?? fallbackSource.stability ?? defaults.stability),
+        similarityBoost: normalizeElevenLabsSimilarityBoost(
+            source.similarityBoost ?? fallbackSource.similarityBoost ?? defaults.similarityBoost
+        ),
+        style: normalizeElevenLabsStyle(source.style ?? fallbackSource.style ?? defaults.style),
+        speed: normalizeElevenLabsSpeed(source.speed ?? fallbackSource.speed ?? defaults.speed),
+        useSpeakerBoost: normalizeElevenLabsUseSpeakerBoost(
+            source.useSpeakerBoost ?? fallbackSource.useSpeakerBoost ?? defaults.useSpeakerBoost
+        )
+    };
+}
+
+function createLegacyElevenLabsVoiceProfile(preferences = {}) {
+    return {
+        voiceId: preferences.elevenLabsVoiceId,
+        modelId: preferences.elevenLabsModelId,
+        languageCode: preferences.elevenLabsLanguageCode,
+        outputFormat: preferences.elevenLabsOutputFormat,
+        optimizeStreamingLatency: preferences.elevenLabsOptimizeStreamingLatency,
+        stability: preferences.elevenLabsStability,
+        similarityBoost: preferences.elevenLabsSimilarityBoost,
+        style: preferences.elevenLabsStyle,
+        speed: preferences.elevenLabsSpeed,
+        useSpeakerBoost: preferences.elevenLabsUseSpeakerBoost
+    };
+}
+
+function normalizeElevenLabsVoiceProfiles(value = {}, preferences = {}) {
+    const source = value && typeof value === 'object' ? value : {};
+    const legacyProfile = createLegacyElevenLabsVoiceProfile(preferences);
+    const legacyLanguage = normalizeElevenLabsLanguageCode(
+        preferences.elevenLabsLanguageCode || DEFAULT_ELEVENLABS_LANGUAGE_CODE
+    );
+    const legacyVoiceFallback = {
+        voiceId: preferences.elevenLabsVoiceId
+    };
+
+    return Object.fromEntries(ELEVENLABS_LANGUAGE_CODES.map((languageCode) => {
+        const profileSource = source[languageCode] && typeof source[languageCode] === 'object'
+            ? source[languageCode]
+            : {};
+        const fallback = Object.keys(profileSource).length
+            ? legacyVoiceFallback
+            : {
+                ...legacyVoiceFallback,
+                ...(languageCode === legacyLanguage ? legacyProfile : {})
+            };
+        return [
+            languageCode,
+            normalizeElevenLabsVoiceProfile(profileSource, languageCode, fallback)
+        ];
+    }));
 }
 
 function normalizeLlmTemperature(value) {
@@ -222,6 +384,10 @@ function normalizeLlmRequestTimeoutMs(value) {
 
 function normalizeComputerControlEnabled(value) {
     return normalizeBoolean(value, DEFAULT_COMPUTER_CONTROL_ENABLED);
+}
+
+function normalizeChunkedTtsEnabled(value) {
+    return normalizeBoolean(value, DEFAULT_CHUNKED_TTS_ENABLED);
 }
 
 function normalizeEmailAuthType(value) {
@@ -257,7 +423,16 @@ function normalizeEmailProfiles(value = {}) {
 
 function normalizeSpeechMode(mode) {
     const normalizedMode = String(mode || '').trim().toLowerCase();
-    return SPEECH_MODE_OPTIONS.includes(normalizedMode) ? normalizedMode : 'cosyvoice3';
+    if (SPEECH_MODE_OPTIONS.includes(normalizedMode)) {
+        return normalizedMode;
+    }
+    if (['elevenlabs', 'eleven-labs', 'eleven_labs', 'server_tts', 'cloud'].includes(normalizedMode)) {
+        return 'server';
+    }
+    if (['cosyvoice', 'cosy-voice', 'cosy_voice'].includes(normalizedMode)) {
+        return 'cosyvoice3';
+    }
+    return 'off';
 }
 
 function normalizeRecognitionMode(mode) {
@@ -500,14 +675,14 @@ function getDefaultState() {
         preferences: {
             petSkipTaskbar: true,
             petScale,
-            speechMode: 'cosyvoice3',
+            speechMode: 'off',
             recognitionMode: 'auto-vad',
             conversationMode: DEFAULT_CONVERSATION_MODE,
             preferredMicDeviceId: '',
             backendBaseUrl: DEFAULT_BACKEND_BASE_URL,
             backendMode: DEFAULT_BACKEND_MODE,
             openclawGatewayUrl: DEFAULT_OPENCLAW_GATEWAY_URL,
-            humanClawStateDir: DEFAULT_HUMANCLAW_STATE_DIR,
+            ailisStateDir: DEFAULT_AILIS_STATE_DIR,
             llmProvider: DEFAULT_LLM_PROVIDER,
             llmBaseUrl: DEFAULT_LLM_BASE_URL,
             llmModel: DEFAULT_LLM_MODEL,
@@ -518,8 +693,16 @@ function getDefaultState() {
             elevenLabsApiKey: DEFAULT_ELEVENLABS_API_KEY,
             elevenLabsVoiceId: DEFAULT_ELEVENLABS_VOICE_ID,
             elevenLabsModelId: DEFAULT_ELEVENLABS_MODEL_ID,
+            elevenLabsLanguageCode: DEFAULT_ELEVENLABS_LANGUAGE_CODE,
             elevenLabsOutputFormat: DEFAULT_ELEVENLABS_OUTPUT_FORMAT,
             elevenLabsTimeoutMs: DEFAULT_ELEVENLABS_TIMEOUT_MS,
+            elevenLabsOptimizeStreamingLatency: DEFAULT_ELEVENLABS_OPTIMIZE_STREAMING_LATENCY,
+            elevenLabsStability: DEFAULT_ELEVENLABS_STABILITY,
+            elevenLabsSimilarityBoost: DEFAULT_ELEVENLABS_SIMILARITY_BOOST,
+            elevenLabsStyle: DEFAULT_ELEVENLABS_STYLE,
+            elevenLabsSpeed: DEFAULT_ELEVENLABS_SPEED,
+            elevenLabsUseSpeakerBoost: DEFAULT_ELEVENLABS_USE_SPEAKER_BOOST,
+            elevenLabsVoiceProfiles: normalizeElevenLabsVoiceProfiles(),
             computerControlEnabled: DEFAULT_COMPUTER_CONTROL_ENABLED,
             cameraDistance: DEFAULT_CAMERA_DISTANCE,
             cameraHeight: DEFAULT_CAMERA_HEIGHT,
@@ -538,6 +721,7 @@ function getDefaultState() {
             desktopNativeTtsRate: DEFAULT_DESKTOP_NATIVE_TTS_RATE,
             desktopNativeTtsPitch: DEFAULT_DESKTOP_NATIVE_TTS_PITCH,
             desktopNativeTtsVolume: DEFAULT_DESKTOP_NATIVE_TTS_VOLUME,
+            chunkedTtsEnabled: DEFAULT_CHUNKED_TTS_ENABLED,
             autoChatEnabled: DEFAULT_AUTO_CHAT_ENABLED,
             autoChatMinIntervalSec: DEFAULT_AUTO_CHAT_MIN_INTERVAL_SEC,
             autoChatMaxIntervalSec: DEFAULT_AUTO_CHAT_MAX_INTERVAL_SEC,
@@ -599,21 +783,6 @@ function normalizeState(inputState) {
         }
     };
 
-    if ((nextState.version || 0) < 8 && normalizedState.preferences.speechMode === 'local') {
-        normalizedState.preferences.speechMode = 'server';
-    }
-    if ((nextState.version || 0) < 10 && normalizedState.preferences.speechMode === 'server') {
-        normalizedState.preferences.speechMode = 'vits';
-    }
-    if ((nextState.version || 0) < 11 && normalizedState.preferences.speechMode === 'vits') {
-        normalizedState.preferences.speechMode = 'server';
-    }
-    if ((nextState.version || 0) < 12 && normalizedState.preferences.speechMode === 'server') {
-        normalizedState.preferences.speechMode = 'local';
-    }
-    if ((nextState.version || 0) < 13 && normalizedState.preferences.speechMode === 'local') {
-        normalizedState.preferences.speechMode = 'cosyvoice3';
-    }
     if ((nextState.version || 0) < 15 && normalizedState.preferences.recognitionMode === 'manual') {
         normalizedState.preferences.recognitionMode = 'auto-vad';
     }
@@ -663,8 +832,8 @@ function normalizeState(inputState) {
     normalizedState.preferences.openclawGatewayUrl = normalizeOpenClawGatewayUrl(
         normalizedState.preferences.openclawGatewayUrl
     );
-    normalizedState.preferences.humanClawStateDir = normalizeHumanClawStateDir(
-        normalizedState.preferences.humanClawStateDir
+    normalizedState.preferences.ailisStateDir = normalizeAILISStateDir(
+        normalizedState.preferences.ailisStateDir
     );
     normalizedState.preferences.llmProvider = normalizeLlmProvider(
         normalizedState.preferences.llmProvider
@@ -696,11 +865,36 @@ function normalizeState(inputState) {
     normalizedState.preferences.elevenLabsModelId = normalizeElevenLabsModelId(
         normalizedState.preferences.elevenLabsModelId
     );
+    normalizedState.preferences.elevenLabsLanguageCode = normalizeElevenLabsLanguageCode(
+        normalizedState.preferences.elevenLabsLanguageCode
+    );
     normalizedState.preferences.elevenLabsOutputFormat = normalizeElevenLabsOutputFormat(
         normalizedState.preferences.elevenLabsOutputFormat
     );
     normalizedState.preferences.elevenLabsTimeoutMs = normalizeElevenLabsTimeoutMs(
         normalizedState.preferences.elevenLabsTimeoutMs
+    );
+    normalizedState.preferences.elevenLabsOptimizeStreamingLatency = normalizeElevenLabsOptimizeStreamingLatency(
+        normalizedState.preferences.elevenLabsOptimizeStreamingLatency
+    );
+    normalizedState.preferences.elevenLabsStability = normalizeElevenLabsStability(
+        normalizedState.preferences.elevenLabsStability
+    );
+    normalizedState.preferences.elevenLabsSimilarityBoost = normalizeElevenLabsSimilarityBoost(
+        normalizedState.preferences.elevenLabsSimilarityBoost
+    );
+    normalizedState.preferences.elevenLabsStyle = normalizeElevenLabsStyle(
+        normalizedState.preferences.elevenLabsStyle
+    );
+    normalizedState.preferences.elevenLabsSpeed = normalizeElevenLabsSpeed(
+        normalizedState.preferences.elevenLabsSpeed
+    );
+    normalizedState.preferences.elevenLabsUseSpeakerBoost = normalizeElevenLabsUseSpeakerBoost(
+        normalizedState.preferences.elevenLabsUseSpeakerBoost
+    );
+    normalizedState.preferences.elevenLabsVoiceProfiles = normalizeElevenLabsVoiceProfiles(
+        nextState.preferences?.elevenLabsVoiceProfiles,
+        normalizedState.preferences
     );
     normalizedState.preferences.computerControlEnabled = normalizeComputerControlEnabled(
         normalizedState.preferences.computerControlEnabled
@@ -760,6 +954,9 @@ function normalizeState(inputState) {
     );
     normalizedState.preferences.desktopNativeTtsVolume = normalizeDesktopNativeTTSVolume(
         normalizedState.preferences.desktopNativeTtsVolume
+    );
+    normalizedState.preferences.chunkedTtsEnabled = normalizeChunkedTtsEnabled(
+        normalizedState.preferences.chunkedTtsEnabled
     );
     normalizedState.preferences.autoChatEnabled = normalizeAutoChatEnabled(
         normalizedState.preferences.autoChatEnabled
@@ -833,9 +1030,73 @@ function loadDesktopState(app) {
     }
 }
 
-function saveDesktopState(app, nextState) {
-    const normalized = normalizeState(nextState);
+function preserveExistingValue(nextPreferences, existingPreferences, key, allowBlankCredentials) {
+    if (allowBlankCredentials.has(key)) {
+        return;
+    }
+    if (!nextPreferences[key] && existingPreferences[key]) {
+        nextPreferences[key] = existingPreferences[key];
+    }
+}
+
+function preserveExistingEmailSecrets(nextPreferences, existingPreferences, allowBlankCredentials) {
+    if (!nextPreferences.emailProfiles || !existingPreferences.emailProfiles) {
+        return;
+    }
+    for (const providerId of EMAIL_PROVIDER_OPTIONS) {
+        const key = `emailProfiles.${providerId}.secret`;
+        if (allowBlankCredentials.has(key)) {
+            continue;
+        }
+        const nextProfile = nextPreferences.emailProfiles[providerId];
+        const existingProfile = existingPreferences.emailProfiles[providerId];
+        if (nextProfile && existingProfile?.secret && !nextProfile.secret) {
+            nextProfile.secret = existingProfile.secret;
+        }
+    }
+}
+
+function preserveExistingElevenLabsProfileVoiceIds(nextPreferences, existingPreferences, allowBlankCredentials) {
+    for (const languageCode of ELEVENLABS_LANGUAGE_CODES) {
+        const key = `elevenLabsVoiceProfiles.${languageCode}.voiceId`;
+        if (allowBlankCredentials.has(key)) {
+            continue;
+        }
+        const nextProfile = nextPreferences.elevenLabsVoiceProfiles?.[languageCode];
+        const existingProfile = existingPreferences.elevenLabsVoiceProfiles?.[languageCode];
+        if (nextProfile && existingProfile?.voiceId && !nextProfile.voiceId) {
+            nextProfile.voiceId = existingProfile.voiceId;
+        }
+    }
+}
+
+function preserveExistingCredentials(filePath, normalized, options = {}) {
+    if (options.preserveExistingCredentials === false || !fs.existsSync(filePath)) {
+        return normalized;
+    }
+
+    try {
+        const rawState = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+        const existing = normalizeState(JSON.parse(rawState));
+        const nextPreferences = normalized.preferences || {};
+        const existingPreferences = existing.preferences || {};
+        const allowBlankCredentials = new Set(options.allowBlankCredentials || []);
+
+        preserveExistingValue(nextPreferences, existingPreferences, 'llmApiKey', allowBlankCredentials);
+        preserveExistingValue(nextPreferences, existingPreferences, 'elevenLabsApiKey', allowBlankCredentials);
+        preserveExistingValue(nextPreferences, existingPreferences, 'elevenLabsVoiceId', allowBlankCredentials);
+        preserveExistingElevenLabsProfileVoiceIds(nextPreferences, existingPreferences, allowBlankCredentials);
+        preserveExistingEmailSecrets(nextPreferences, existingPreferences, allowBlankCredentials);
+    } catch (error) {
+        console.warn('⚠️ 合并已保存凭据失败，继续保存当前状态：', error);
+    }
+
+    return normalized;
+}
+
+function saveDesktopState(app, nextState, options = {}) {
     const filePath = getStateFilePath(app);
+    const normalized = preserveExistingCredentials(filePath, normalizeState(nextState), options);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2), 'utf8');
     return normalized;
@@ -871,6 +1132,7 @@ module.exports = {
     DEFAULT_DESKTOP_NATIVE_TTS_PITCH,
     DEFAULT_DESKTOP_NATIVE_TTS_RATE,
     DEFAULT_DESKTOP_NATIVE_TTS_VOLUME,
+    DEFAULT_CHUNKED_TTS_ENABLED,
     DEFAULT_LLM_API_KEY,
     DEFAULT_LLM_BASE_URL,
     DEFAULT_LLM_MODEL,
@@ -881,11 +1143,19 @@ module.exports = {
     LLM_PROVIDER_DEFAULT_MODELS,
     DEFAULT_ELEVENLABS_API_BASE,
     DEFAULT_ELEVENLABS_API_KEY,
+    DEFAULT_ELEVENLABS_LANGUAGE_CODE,
     DEFAULT_ELEVENLABS_MODEL_ID,
+    DEFAULT_ELEVENLABS_OPTIMIZE_STREAMING_LATENCY,
     DEFAULT_ELEVENLABS_OUTPUT_FORMAT,
+    DEFAULT_ELEVENLABS_SIMILARITY_BOOST,
+    DEFAULT_ELEVENLABS_SPEED,
+    DEFAULT_ELEVENLABS_STABILITY,
+    DEFAULT_ELEVENLABS_STYLE,
     DEFAULT_ELEVENLABS_TIMEOUT_MS,
+    DEFAULT_ELEVENLABS_USE_SPEAKER_BOOST,
     DEFAULT_ELEVENLABS_VOICE_ID,
-    DEFAULT_HUMANCLAW_STATE_DIR,
+    DEFAULT_ELEVENLABS_VOICE_PROFILES,
+    DEFAULT_AILIS_STATE_DIR,
     DEFAULT_COMPUTER_CONTROL_ENABLED,
     DEFAULT_OPENCLAW_GATEWAY_URL,
     DEFAULT_PET_SCALE,
@@ -897,6 +1167,7 @@ module.exports = {
     DEFAULT_PET_MOUSE_HIT_TEST_OFFSET_Y_RATIO,
     DEFAULT_PET_MOUSE_HIT_TEST_DEBUG,
     EMAIL_PROVIDER_OPTIONS,
+    ELEVENLABS_LANGUAGE_CODES,
     LLM_PROVIDER_OPTIONS,
     PET_SCALE_OPTIONS,
     CONVERSATION_MODE_OPTIONS,
@@ -935,11 +1206,21 @@ module.exports = {
     normalizeDesktopNativeTTSPitch,
     normalizeDesktopNativeTTSRate,
     normalizeDesktopNativeTTSVolume,
+    normalizeChunkedTtsEnabled,
     normalizeElevenLabsApiBase,
     normalizeElevenLabsApiKey,
+    normalizeElevenLabsLanguageCode,
     normalizeElevenLabsModelId,
+    normalizeElevenLabsOptimizeStreamingLatency,
     normalizeElevenLabsOutputFormat,
+    normalizeElevenLabsSimilarityBoost,
+    normalizeElevenLabsSpeed,
+    normalizeElevenLabsStability,
+    normalizeElevenLabsStyle,
     normalizeElevenLabsTimeoutMs,
+    normalizeElevenLabsUseSpeakerBoost,
+    normalizeElevenLabsVoiceProfile,
+    normalizeElevenLabsVoiceProfiles,
     normalizeElevenLabsVoiceId,
     normalizeLlmApiKey,
     normalizeLlmBaseUrl,
@@ -949,7 +1230,7 @@ module.exports = {
     normalizeLlmTemperature,
     normalizeEmailProfiles,
     normalizeOpenClawGatewayUrl,
-    normalizeHumanClawStateDir,
+    normalizeAILISStateDir,
     normalizePetMouseHitTestDebug,
     normalizePetMouseHitTestEnabled,
     normalizePetMouseHitTestHeightRatio,

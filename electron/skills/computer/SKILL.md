@@ -17,8 +17,27 @@ triggers:
 规则：
 - 优先读取和检查，再修改；修改后主动复核。
 - 写文件、删除、移动、shell/PTY、进程写入/结束等动作按 Gateway 策略审批。
-- 命令和系统控制通过 Platform Adapter 执行；当前桌面端优先 Windows，但不要把 Windows-only 假设写进任务策略。需要平台细节时先看 computer.schema 的 platform/safety。
+- 命令和系统控制通过 Platform Adapter 执行；当前系统由每轮 `runtime_environment.family/default_shell/path_style` 动态给出，不属于长期记忆。不要默认当前是 Linux、Windows 或 macOS。
+- 命令应由 Agent 自己按 `runtime_environment` 写成对应平台语义；工具层不做 shell 字符串解析改写。只有当前平台明确支持时，才使用 `head`、`tail`、`wc`、`/dev/null`、`rm -rf`、`grep`、PowerShell 管道、cmd 的 `NUL`/`cd /d`、Windows 盘符路径等平台专属片段。
 - 高风险动作必须说明原因，工具层会根据 contract 和 permission profile 决定是否继续。
+
+命令工具用法：
+- `exec` / `exec_command` 在当前 `runtime_environment` 的本机命令环境中运行命令，返回 `stdout`、`stderr`、`exitCode`、`durationMs`、`workdir` 等执行结果。
+- 适合运行已有脚本、测试、构建、诊断命令、工具链检查和短的一次性命令。
+- 简单命令可以直接放在 `command` / `cmd` 中；复杂路径或参数优先使用 `args`，减少 shell quoting 问题。
+- 复杂 Python、PowerShell、Bash、Node 逻辑优先写成临时脚本文件，再用 `exec` / `exec_command` 运行脚本入口。
+- 短 inline 代码可以使用 `python -c` / `node -e`；不要把大段多行程序塞进 shell 字符串，尤其是在 shell 方言或 quoting 规则不确定时。
+- 如果命令会生成文件，最好在 `stdout` 打印生成路径、文件大小或 `DONE` 标记，随后用 `read` / `stat` / `hash` 复核。
+- `exitCode=0` 只表示进程正常退出，不表示任务语义成功；任务证据主要来自 `stdout` / `stderr` 和后续文件验证。
+- 当返回里有 `outputId`、`bytes`、`lineCount` 或 `previewTruncated=true` 时，完整 stdout/stderr 已保存到 Exec Output Store。需要完整片段时先用 `tool_search` 查询 `output_read` / `output_tail` / `output_search`，再按需读取、搜索或查看尾部；不要把 `outputId` 当文件路径传给 `computer.read`，也不要为了恢复被截断输出而盲目重跑命令。
+- 如果预期有输出或文件产物，但 `stdout` / `stderr` 为空，应视为没有拿到证据，检查 quoting、`workdir`、输出路径，或改为运行脚本文件/专用工具。
+
+示例：
+- 运行已有 Python 脚本：`python scripts/extract_docx.py`
+- 短 inline Python：`python -c "print('hello')"`
+- 运行 Node 测试：`node --test tests/example.test.mjs`
+- 查看 Git 状态：`git status --short`
+- 生成文件后复核：先运行脚本并打印输出路径，再用 `read` / `stat` 检查该路径。
 
 桌面任务工具选择：
 - 工具层负责稳定执行，不负责猜题。不要用固定题面、固定文件名、固定邮箱、固定 URL 做路由。
