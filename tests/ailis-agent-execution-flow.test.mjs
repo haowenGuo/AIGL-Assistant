@@ -12,6 +12,7 @@ const {
     buildFinalAnswerNativeToolSpec,
     buildSourceQuestionEvidenceArtifact,
     buildToolResultEvent,
+    buildToolObservationDigest,
     buildLosslessToolObservationDigest,
     isExactAnswerExecutionMode,
     looksLikeSelfContainedExactAnswerQuestion,
@@ -461,6 +462,135 @@ test('Agent model-facing observation digest stays compact and artifact-backed', 
     assert.ok(JSON.stringify(digest[0].details).length < 1800);
     assert.deepEqual(digest[0].evidenceRefs, stepResult.evidenceArtifacts.map((artifact) => artifact.id));
     assert.equal(stepResult.evidenceArtifacts[0].type, 'ResearchSourceEvidence');
+});
+
+test('Agent tool observations keep small artifact query compactRows lossless', () => {
+    const rows = Array.from({ length: 20 }, (_, index) => ({
+        rowNumber: index + 1,
+        cells: index === 0
+            ? 'START | #0099FF | #0099FF | #0099FF | #0099FF | #0099FF | #0099FF | #0099FF | #0099FF'
+            : (index === 19
+                ? '#0099FF | #0099FF | #0099FF | #0099FF | #0099FF | #0099FF | #0099FF | #92D050 | END'
+                : `#F478A7 | #0099FF | #0099FF | #0099FF | #F478A7 | #FFFF00 | #92D050 | #92D050 | #0099FF row-${index + 1}`)
+    }));
+    const artifactText = JSON.stringify({
+        schema: 'ailis.artifact_tools.tool_api_result.v1',
+        ok: true,
+        status: 'completed',
+        action: 'query',
+        adapterId: 'xlsx',
+        artifact: {
+            sessionId: 'arts_fixture',
+            artifactId: 'art_fixture',
+            format: 'xlsx',
+            kind: 'workbook'
+        },
+        observation: {
+            schema: 'ailis.artifact_tools.compact_observation.v1',
+            format: 'xlsx',
+            action: 'query',
+            sheetName: 'Sheet1',
+            range: 'Sheet1!A1:I20',
+            requestedRange: 'Sheet1!A1:I20',
+            usedRange: 'Sheet1!A1:I20',
+            returnedRange: 'Sheet1!A1:I20',
+            rowCount: 20,
+            columnCount: 9,
+            truncated: false,
+            columns: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'],
+            compactRows: rows,
+            candidateCount: rows.length,
+            diagnostics: [],
+            nextActions: []
+        }
+    }, null, 2);
+    assert.ok(artifactText.length < 12000);
+
+    const digest = buildToolObservationDigest([{
+        id: 'artifact-query',
+        title: 'artifact_tools',
+        tool: 'artifact_tools',
+        args: { action: 'query', sessionId: 'arts_fixture', include: ['values', 'fills'] },
+        response: {
+            ok: true,
+            status: 'completed',
+            result: {
+                content: [{ type: 'text', text: artifactText }]
+            }
+        }
+    }]);
+
+    assert.equal(digest.length, 1);
+    assert.equal(digest[0].lossless, true);
+    assert.equal(digest[0].text, artifactText);
+    assert.equal(digest[0].compression, null);
+    assert.match(digest[0].text, /START/);
+    assert.match(digest[0].text, /rowNumber": 11/);
+    assert.match(digest[0].text, /END/);
+    assert.doesNotMatch(digest[0].text, /truncated for model budget/);
+});
+
+test('Agent tool observations compress large artifact query results by row window with continuation', () => {
+    const rows = Array.from({ length: 220 }, (_, index) => ({
+        rowNumber: index + 1,
+        cells: `R${index + 1}C1 | R${index + 1}C2 | R${index + 1}C3 | #${String(index).padStart(6, '0')}`
+    }));
+    const artifactText = JSON.stringify({
+        schema: 'ailis.artifact_tools.tool_api_result.v1',
+        ok: true,
+        status: 'completed',
+        action: 'query',
+        adapterId: 'xlsx',
+        artifact: {
+            sessionId: 'arts_big',
+            artifactId: 'art_big',
+            format: 'xlsx',
+            kind: 'workbook'
+        },
+        observation: {
+            schema: 'ailis.artifact_tools.compact_observation.v1',
+            format: 'xlsx',
+            action: 'query',
+            sheetName: 'Map',
+            range: 'Map!A1:D220',
+            requestedRange: 'Map!A1:D220',
+            usedRange: 'Map!A1:D220',
+            returnedRange: 'Map!A1:D220',
+            rowCount: 220,
+            columnCount: 4,
+            truncated: false,
+            columns: ['A', 'B', 'C', 'D'],
+            compactRows: rows,
+            candidateCount: rows.length,
+            diagnostics: [],
+            nextActions: []
+        }
+    }, null, 2);
+    assert.ok(artifactText.length > 12000);
+
+    const digest = buildToolObservationDigest([{
+        id: 'artifact-query-big',
+        title: 'artifact_tools',
+        tool: 'artifact_tools',
+        args: { action: 'query', sessionId: 'arts_big', include: ['values', 'fills'] },
+        response: {
+            ok: true,
+            status: 'completed',
+            result: {
+                content: [{ type: 'text', text: artifactText }]
+            }
+        }
+    }]);
+
+    const parsed = JSON.parse(digest[0].text);
+    assert.equal(digest[0].lossless, false);
+    assert.equal(digest[0].compression.reason, 'artifact_tool_observation_exceeded_prompt_budget');
+    assert.equal(parsed.observation.promptCompression.lossless, false);
+    assert.equal(parsed.observation.promptCompression.visibleRowStrategy, 'head_tail_rows');
+    assert.ok(parsed.observation.promptCompression.omittedCompactRowCount > 0);
+    assert.equal(parsed.observation.continuation.args.range, 'Map!A12:D215');
+    assert.ok(parsed.observation.compactRows.every((row) => row.rowNumber && typeof row.cells === 'string'));
+    assert.doesNotMatch(digest[0].text, /truncated for model budget/);
 });
 
 test('Agent model-facing observation digest summarizes large tool args', () => {
