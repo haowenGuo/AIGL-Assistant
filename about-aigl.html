@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>✨ AILIS · 你的可爱虚拟助手</title>
+    <link rel="icon" type="image/png" href="assets/ailis/avatar-wave.png">
+    <link rel="apple-touch-icon" href="assets/ailis/avatar-wave.png">
     <style>
         /* ===== 全局重置 & 变量 ===== */
         * {
@@ -68,15 +70,30 @@
         }
 
         .navbar .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 9px;
             font-size: 20px;
             font-weight: 700;
+        }
+
+        .logo-avatar {
+            width: 38px;
+            height: 38px;
+            object-fit: contain;
+            border-radius: 50%;
+            background: linear-gradient(135deg, rgba(232, 248, 255, 0.96), rgba(255, 244, 248, 0.96));
+            box-shadow: 0 8px 22px rgba(115, 184, 229, 0.22);
+        }
+
+        .logo-text {
             background: var(--primary-gradient);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
 
-        .navbar .logo span {
+        .logo-dot {
             background: var(--accent-gradient);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -162,6 +179,16 @@
             font-weight: 500;
             margin-bottom: 24px;
             letter-spacing: 1px;
+        }
+
+        .hero-portrait {
+            width: clamp(156px, 22vw, 230px);
+            height: auto;
+            margin: 0 auto 14px;
+            position: relative;
+            z-index: 1;
+            filter: drop-shadow(0 18px 30px rgba(115, 184, 229, 0.26));
+            animation: float 4.4s ease-in-out infinite;
         }
 
         .hero h1 {
@@ -312,15 +339,16 @@
             width: 240px;
             height: 240px;
             border-radius: 50%;
-            background: var(--primary-gradient);
+            background:
+                radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.95), rgba(232, 248, 255, 0.78) 52%, rgba(240, 168, 200, 0.24) 100%),
+                var(--primary-gradient);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 90px;
-            color: #fff;
             box-shadow: 0 12px 40px rgba(168, 216, 240, 0.35);
             animation: float 4s ease-in-out infinite;
             position: relative;
+            overflow: visible;
         }
 
         .avatar-circle::after {
@@ -330,6 +358,14 @@
             border-radius: 50%;
             border: 2px solid rgba(168, 216, 240, 0.30);
             animation: pulse-ring 3s ease-in-out infinite;
+        }
+
+        .avatar-circle img {
+            width: 112%;
+            height: 112%;
+            object-fit: contain;
+            transform: translateY(10px);
+            filter: drop-shadow(0 10px 18px rgba(44, 62, 80, 0.10));
         }
 
         @keyframes float {
@@ -392,8 +428,23 @@
         }
 
         .skill-card .icon {
-            font-size: 36px;
-            margin-bottom: 14px;
+            width: 74px;
+            height: 74px;
+            margin: 0 auto 14px;
+            border-radius: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, rgba(232, 248, 255, 0.92), rgba(255, 244, 248, 0.92));
+            box-shadow: inset 0 0 0 1px rgba(168, 216, 240, 0.26), 0 10px 24px rgba(115, 184, 229, 0.16);
+            overflow: hidden;
+        }
+
+        .skill-card .icon img {
+            width: 92%;
+            height: 92%;
+            object-fit: contain;
+            transform: translateY(4px);
         }
 
         .skill-card h3 {
@@ -516,8 +567,23 @@
         }
 
         .arch-item .layer-icon {
-            font-size: 32px;
-            margin-bottom: 10px;
+            width: 66px;
+            height: 66px;
+            margin: 0 auto 10px;
+            border-radius: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, rgba(232, 248, 255, 0.92), rgba(255, 244, 248, 0.92));
+            box-shadow: inset 0 0 0 1px rgba(168, 216, 240, 0.24), 0 8px 22px rgba(115, 184, 229, 0.14);
+            overflow: hidden;
+        }
+
+        .arch-item .layer-icon img {
+            width: 94%;
+            height: 94%;
+            object-fit: contain;
+            transform: translateY(4px);
         }
 
         .arch-item h4 {
@@ -643,7 +709,10 @@
 
     <!-- ===== 导航栏 ===== -->
     <nav class="navbar">
-        <div class="logo">✨ AILIS<span>.</span></div>
+        <div class="logo" aria-label="AILIS">
+            <img class="logo-avatar" src="assets/ailis/avatar-wave.png" alt="" aria-hidden="true">
+            <span class="logo-text">AILIS<span class="logo-dot">.</span></span>
+        </div>
         <ul class="nav-links">
             <li><a href="#about">关于我</a></li>
             <li><a href="#skills">能力</a></li>
@@ -655,6 +724,7 @@
 
     <!-- ===== Hero ===== -->
     <section class="hero" id="home">
+        <img class="hero-portrait" src="assets/ailis/avatar-wave.png" alt="AILIS 正在挥手打招呼">
         <div class="hero-badge">✦ 桌面虚拟助手 · AILIS v1.0.7</div>
         <h1>
             你好，我是<br>
@@ -681,7 +751,9 @@
 
         <div class="about-grid">
             <div class="about-avatar">
-                <div class="avatar-circle">🤗</div>
+                <div class="avatar-circle">
+                    <img src="assets/ailis/avatar-happy.png" alt="AILIS 开心形象">
+                </div>
             </div>
             <div class="about-text">
                 <h2>AILIS</h2>
@@ -709,42 +781,42 @@
 
         <div class="skills-grid">
             <div class="skill-card">
-                <div class="icon">💬</div>
+                <div class="icon"><img src="assets/ailis/avatar-happy.png" alt="AILIS 开心表情"></div>
                 <h3>自然对话</h3>
                 <p>活泼亲切的语气，生活化的表达，陪你聊任何话题～偶尔撒娇，但不夸张！</p>
             </div>
             <div class="skill-card">
-                <div class="icon">🤖</div>
+                <div class="icon"><img src="assets/ailis/avatar-thinking.png" alt="AILIS 思考表情"></div>
                 <h3>AI 智能</h3>
                 <p>基于大语言模型，理解复杂指令，推理问题，提供有价值的答案。</p>
             </div>
             <div class="skill-card">
-                <div class="icon">💻</div>
+                <div class="icon"><img src="assets/ailis/avatar-cool.png" alt="AILIS 自信表情"></div>
                 <h3>编程开发</h3>
                 <p>写代码、调试、重构、Git 管理、代码搜索……前后端都能帮上手！</p>
             </div>
             <div class="skill-card">
-                <div class="icon">🔍</div>
+                <div class="icon"><img src="assets/ailis/avatar-idea.png" alt="AILIS 灵感表情"></div>
                 <h3>网络搜索</h3>
                 <p>查资料、读论文、找文档，从海量信息中帮你快速定位关键内容。</p>
             </div>
             <div class="skill-card">
-                <div class="icon">📧</div>
+                <div class="icon"><img src="assets/ailis/avatar-thanks.png" alt="AILIS 感谢表情"></div>
                 <h3>邮件管理</h3>
                 <p>QQ 邮箱、Gmail、Outlook —— 读邮件、搜邮件、写草稿、发送，统统交给我！</p>
             </div>
             <div class="skill-card">
-                <div class="icon">⚙️</div>
+                <div class="icon"><img src="assets/ailis/avatar-proud.png" alt="AILIS 得意表情"></div>
                 <h3>命令行控制</h3>
                 <p>执行命令、操作文件系统、管理进程、PTY 终端……专业工具一把抓。</p>
             </div>
             <div class="skill-card">
-                <div class="icon">👁️</div>
+                <div class="icon"><img src="assets/ailis/avatar-eyes.png" alt="AILIS 观察表情"></div>
                 <h3>视觉感知</h3>
                 <p>能看屏幕内容（只读不控制），帮你理解页面状态、报错信息和上下文。</p>
             </div>
             <div class="skill-card">
-                <div class="icon">🧠</div>
+                <div class="icon"><img src="assets/ailis/avatar-sparkle.png" alt="AILIS 闪光表情"></div>
                 <h3>记忆系统</h3>
                 <p>记得你的偏好、习惯和对话历史，越用越了解你，越陪伴越贴心～</p>
             </div>
@@ -818,27 +890,27 @@
         <div class="section-title" style="margin-bottom:36px;">🏗️ 项目 <span class="highlight">架构</span></div>
         <div class="arch-grid">
             <div class="arch-item">
-                <div class="layer-icon">🎭</div>
+                <div class="layer-icon"><img src="assets/ailis/avatar-wave.png" alt="AILIS 挥手表情"></div>
                 <h4>表现层</h4>
                 <p>VRM 角色渲染 · 表情驱动 · TTS 语音<br>前端 Character Runtime</p>
             </div>
             <div class="arch-item">
-                <div class="layer-icon">🧠</div>
+                <div class="layer-icon"><img src="assets/ailis/avatar-thinking.png" alt="AILIS 思考表情"></div>
                 <h4>Agent 运行时</h4>
                 <p>工具执行引擎 · 任务规划<br>Codex-like 协议</p>
             </div>
             <div class="arch-item">
-                <div class="layer-icon">💾</div>
+                <div class="layer-icon"><img src="assets/ailis/avatar-love.png" alt="AILIS 喜爱表情"></div>
                 <h4>记忆系统</h4>
                 <p>人设记忆 · 用户偏好 · 事件日志<br>长期上下文管理</p>
             </div>
             <div class="arch-item">
-                <div class="layer-icon">🔧</div>
+                <div class="layer-icon"><img src="assets/ailis/avatar-cool.png" alt="AILIS 自信表情"></div>
                 <h4>工具层</h4>
                 <p>搜索 · 邮件 · 文件 · 代码 · 命令行<br>MCP 外部工具集成</p>
             </div>
             <div class="arch-item">
-                <div class="layer-icon">👁️</div>
+                <div class="layer-icon"><img src="assets/ailis/avatar-eyes.png" alt="AILIS 观察表情"></div>
                 <h4>视觉 &amp; 语音</h4>
                 <p>屏幕感知（只读）· ASR 语音输入<br>TTS 语音输出</p>
             </div>
